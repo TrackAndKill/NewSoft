@@ -26,8 +26,6 @@ class SystemState(Base):
 
 
 class Goal(Base):
-    """Top-level founder-set goal. Drives discovery and venture creation."""
-
     __tablename__ = "goals"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -37,8 +35,6 @@ class Goal(Base):
 
 
 class Idea(Base):
-    """Candidate business idea produced by the Discovery pod."""
-
     __tablename__ = "ideas"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id"), nullable=True)
@@ -52,14 +48,11 @@ class Idea(Base):
 
 
 class Memo(Base):
-    """Investment memo for a candidate idea."""
-
     __tablename__ = "memos"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idea_id: Mapped[int] = mapped_column(ForeignKey("ideas.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     recommendation: Mapped[str] = mapped_column(String(40), default="hold")
-    # Set by the Board after voting: pending / fund / explore / pass.
     decision: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
     decision_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -68,8 +61,6 @@ class Memo(Base):
 
 
 class BoardReview(Base):
-    """One Board partner's vote on a memo."""
-
     __tablename__ = "board_reviews"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     memo_id: Mapped[int] = mapped_column(ForeignKey("memos.id"), nullable=False)
@@ -81,8 +72,6 @@ class BoardReview(Base):
 
 
 class Venture(Base):
-    """A funded venture. Created by the CEO when the Board votes FUND."""
-
     __tablename__ = "ventures"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idea_id: Mapped[int] = mapped_column(ForeignKey("ideas.id"), nullable=False)
@@ -95,8 +84,6 @@ class Venture(Base):
 
 
 class AgentRun(Base):
-    """One invocation of an agent, with full prompt/response audit trail."""
-
     __tablename__ = "agent_runs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     agent: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -116,8 +103,6 @@ class AgentRun(Base):
 
 
 class ToolCall(Base):
-    """A side-effectful tool call. Logged whether dry-run or real."""
-
     __tablename__ = "tool_calls"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
@@ -130,8 +115,6 @@ class ToolCall(Base):
 
 
 class Approval(Base):
-    """Pending action awaiting human approval."""
-
     __tablename__ = "approvals"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -144,9 +127,22 @@ class Approval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class Event(Base):
-    """Generic activity-feed event for the dashboard."""
+class Experiment(Base):
+    """Validator-designed experiment for an EXPLORE memo."""
 
+    __tablename__ = "experiments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    memo_id: Mapped[int] = mapped_column(ForeignKey("memos.id"), nullable=False)
+    approval_id: Mapped[int | None] = mapped_column(ForeignKey("approvals.id"), nullable=True)
+    design_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="designed", nullable=False)
+    result_md: Mapped[str] = mapped_column(Text, default="")
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Event(Base):
     __tablename__ = "events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(60), nullable=False)

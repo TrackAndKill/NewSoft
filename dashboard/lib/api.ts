@@ -8,6 +8,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   status: () => req<any>("/api/status"),
+  costs: () => req<any>("/api/costs"),
   goals: () => req<any[]>("/api/goals"),
   createGoal: (title: string, description: string) =>
     req<any>("/api/goals", {
@@ -18,6 +19,8 @@ export const api = {
   ideas: () => req<any[]>("/api/ideas"),
   memos: () => req<any[]>("/api/memos"),
   events: () => req<any[]>("/api/events"),
+  agentRun: (id: number | string) => req<any>(`/api/agent_runs/${id}`),
+  experiments: () => req<any[]>("/api/experiments"),
   approvals: (status = "pending") => req<any[]>(`/api/approvals?status=${status}`),
   decide: (id: number, approve: boolean) =>
     req<any>(`/api/approvals/${id}`, {
@@ -27,6 +30,7 @@ export const api = {
     }),
   triggerDiscovery: () => req<any>("/api/discovery/run", { method: "POST" }),
   triggerBoard: () => req<any>("/api/board/run", { method: "POST" }),
+  triggerValidator: () => req<any>("/api/validator/run", { method: "POST" }),
   boardReviews: (memoId?: number) =>
     req<any[]>(`/api/board/reviews${memoId ? `?memo_id=${memoId}` : ""}`),
   ventures: () => req<any[]>("/api/ventures"),

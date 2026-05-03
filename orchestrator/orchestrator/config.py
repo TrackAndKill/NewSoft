@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     dry_run: bool = True
     daily_spend_cap_usd: float = 5.00
     system_active: bool = True
+    brave_api_key: str = ""
+    brave_search_api_key: str = ""
 
     model_opus: str = "claude-opus-4-7"
     model_sonnet: str = "claude-sonnet-4-6"

@@ -1,0 +1,15 @@
+[Unit]
+Description=NewSoft nightly Postgres backup
+Wants=postgresql.service
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=newsoft-backup
+Group=newsoft-backup
+WorkingDirectory=/var/backups/newsoft
+ExecStart=/bin/bash -lc 'set -euo pipefail; pg_dump -h localhost -p 5432 -U newsoft -Fc -f /var/backups/newsoft/newsoft-$(date +%%Y%%m%%d-%%H%%M).pgc newsoft; find /var/backups/newsoft -name "newsoft-*.pgc" -mtime +14 -delete'
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/backups/newsoft /home/newsoft-backup

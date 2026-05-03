@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # NewSoft installer for Ubuntu 24.04 with an existing Postgres on localhost.
 # Idempotent: safe to re-run.
-#
 # Usage: sudo bash infra/install.sh [REPO_DIR]
-# REPO_DIR defaults to the parent of this script.
 
 set -euo pipefail
 
 REPO_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 INSTALL_DIR="/opt/newsoft"
 SERVICE_USER="newsoft"
+BACKUP_USER="newsoft-backup"
+BACKUP_DIR="/var/backups/newsoft"
 
 echo "==> Installing NewSoft from ${REPO_DIR} into ${INSTALL_DIR}"
 
@@ -18,10 +18,10 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo "==> Installing system packages (python, node, caddy)"
+echo "==> Installing system packages"
 apt-get update -y
 apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3-pip \
+    python3.12 python3.12-venv python3-pip postgresql-client \
     curl ca-certificates gnupg
 if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -37,16 +37,20 @@ if ! command -v caddy >/dev/null 2>&1; then
     apt-get install -y caddy
 fi
 
-echo "==> Creating service user ${SERVICE_USER}"
+echo "==> Creating service users"
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
     useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
+if ! id -u "$BACKUP_USER" >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir "/home/${BACKUP_USER}" --shell /usr/sbin/nologin "$BACKUP_USER"
+fi
+install -d -m 700 -o "$BACKUP_USER" -g "$BACKUP_USER" "$BACKUP_DIR"
 
 echo "==> Syncing code to ${INSTALL_DIR}"
 mkdir -p "$INSTALL_DIR"
 rsync -a --delete \
     --exclude '.git' --exclude 'node_modules' --exclude '.venv' \
-    --exclude '.next' --exclude '__pycache__' \
+    --exclude '.next' --exclude '__pycache__' --exclude '.env' \
     "${REPO_DIR}/" "${INSTALL_DIR}/"
 
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
@@ -66,7 +70,21 @@ END$$;
 SELECT 'CREATE DATABASE newsoft OWNER newsoft'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'newsoft')\gexec
 SQL
-echo "    NOTE: change the 'changeme' password in Postgres AND in /opt/newsoft/.env."
+
+echo "==> Installing backup timer"
+DB_PASS=""
+if grep -q '^POSTGRES_PASSWORD=' "${INSTALL_DIR}/.env"; then
+    DB_PASS="$(grep '^POSTGRES_PASSWORD=' "${INSTALL_DIR}/.env" | tail -1 | cut -d= -f2-)"
+fi
+if [[ -n "$DB_PASS" ]]; then
+    printf 'localhost:5432:newsoft:newsoft:%s\n' "$DB_PASS" > "/home/${BACKUP_USER}/.pgpass"
+    chown "$BACKUP_USER:$BACKUP_USER" "/home/${BACKUP_USER}/.pgpass"
+    chmod 600 "/home/${BACKUP_USER}/.pgpass"
+else
+    echo "    WARNING: POSTGRES_PASSWORD not found; create /home/${BACKUP_USER}/.pgpass manually."
+fi
+install -m 644 "${INSTALL_DIR}/infra/systemd/newsoft-backup.service" /etc/systemd/system/
+install -m 644 "${INSTALL_DIR}/infra/systemd/newsoft-backup.timer" /etc/systemd/system/
 
 echo "==> Building orchestrator venv"
 python3.12 -m venv "${INSTALL_DIR}/orchestrator/.venv"
@@ -80,26 +98,20 @@ npm run build
 
 echo "==> Setting ownership"
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR"
+chmod 600 "${INSTALL_DIR}/.env"
+chown "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}/.env"
 
 echo "==> Installing systemd units"
 install -m 644 "${INSTALL_DIR}/infra/systemd/newsoft-orchestrator.service" /etc/systemd/system/
 install -m 644 "${INSTALL_DIR}/infra/systemd/newsoft-dashboard.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable newsoft-orchestrator newsoft-dashboard
+systemctl enable newsoft-orchestrator newsoft-dashboard newsoft-backup.timer
+systemctl start newsoft-backup.timer
 
 cat <<'NEXT'
 
 ==> Install complete.
-
-Next steps:
-  1. Edit /opt/newsoft/.env (set ANTHROPIC_API_KEY and the Postgres password).
-  2. Sync the Postgres password:
-        sudo -u postgres psql -c "ALTER ROLE newsoft PASSWORD 'YOUR_PASSWORD';"
-  3. Start services:
-        systemctl start newsoft-orchestrator newsoft-dashboard
-        systemctl status newsoft-orchestrator newsoft-dashboard
-  4. (Optional) Configure Caddy:
-        cp /opt/newsoft/infra/Caddyfile /etc/caddy/Caddyfile
-        # edit YOUR_SUBDOMAIN
-        systemctl reload caddy
+Verify:
+  systemctl status newsoft-orchestrator newsoft-dashboard
+  systemctl list-timers | grep newsoft-backup
 NEXT

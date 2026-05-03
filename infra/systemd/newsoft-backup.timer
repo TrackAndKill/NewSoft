@@ -1,0 +1,10 @@
+[Unit]
+Description=Run NewSoft Postgres backup nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=newsoft-backup.service
+
+[Install]
+WantedBy=timers.target
