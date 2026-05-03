@@ -56,13 +56,17 @@ def run_agent(spec: AgentSpec, messages: list[dict], *, expected_output_tokens: 
 
     started = time.time()
     try:
-        resp = client().messages.create(
-            model=spec.model,
-            max_tokens=spec.max_tokens,
-            system=spec.system_prompt,
-            messages=messages,
-            tools=spec.tools or None,
-        )
+        # The Anthropic SDK rejects tools=None / tools=[]; only pass the kwarg
+        # when there's at least one tool defined.
+        kwargs: dict = {
+            "model": spec.model,
+            "max_tokens": spec.max_tokens,
+            "system": spec.system_prompt,
+            "messages": messages,
+        }
+        if spec.tools:
+            kwargs["tools"] = spec.tools
+        resp = client().messages.create(**kwargs)
     except Exception as e:
         with session_scope() as s:
             run = AgentRun(

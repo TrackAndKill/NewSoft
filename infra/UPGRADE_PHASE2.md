@@ -1,5 +1,11 @@
 # NewSoft — Phase 2 upgrade runbook
 
+> **Reverse proxy choice:** the rest of this doc assumes Caddy. If your VM
+> already runs nginx for other apps (do not displace it), use the nginx vhost
+> at `infra/nginx-newsoft.conf` instead and skip steps 7–8 below — install
+> the vhost, generate `/etc/nginx/.newsoft_htpasswd` with `htpasswd`, and
+> reload nginx. Same outcome.
+
 In-place upgrade of an existing Phase 1 deployment. Adds:
 
 1. Caddy basicauth on `firm.profithub.me` (single account: `founder`).
