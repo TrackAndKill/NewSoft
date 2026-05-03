@@ -1,7 +1,7 @@
-# Replace YOUR_SUBDOMAIN with the hostname pointed at this VM (e.g. firm.example.com).
-# Caddy gets a free Let's Encrypt cert automatically.
+# Caddy auto-provisions a Let's Encrypt cert for this hostname.
+# Point an A record for firm.profithub.me at this VM's IPv4 first.
 
-YOUR_SUBDOMAIN {
+firm.profithub.me {
     encode gzip
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
