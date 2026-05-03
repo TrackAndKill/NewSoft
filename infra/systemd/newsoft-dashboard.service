@@ -1,0 +1,19 @@
+[Unit]
+Description=NewSoft Dashboard (Next.js)
+After=network.target newsoft-orchestrator.service
+
+[Service]
+Type=simple
+User=newsoft
+Group=newsoft
+WorkingDirectory=/opt/newsoft/dashboard
+EnvironmentFile=/opt/newsoft/.env
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+MemoryMax=384M
+CPUQuota=60%
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

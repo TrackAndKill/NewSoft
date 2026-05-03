@@ -1,0 +1,23 @@
+[Unit]
+Description=NewSoft Orchestrator (FastAPI + scheduler)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=newsoft
+Group=newsoft
+WorkingDirectory=/opt/newsoft/orchestrator
+EnvironmentFile=/opt/newsoft/.env
+ExecStart=/opt/newsoft/orchestrator/.venv/bin/python -m orchestrator
+Restart=on-failure
+RestartSec=5
+# Resource caps for the small VM
+MemoryMax=512M
+CPUQuota=80%
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
