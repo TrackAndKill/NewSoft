@@ -59,9 +59,39 @@ class Memo(Base):
     idea_id: Mapped[int] = mapped_column(ForeignKey("ideas.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     recommendation: Mapped[str] = mapped_column(String(40), default="hold")
+    # Set by the Board after voting: pending / fund / explore / pass.
+    decision: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    decision_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     idea: Mapped["Idea"] = relationship("Idea")
+
+
+class BoardReview(Base):
+    """One Board partner's vote on a memo."""
+
+    __tablename__ = "board_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    memo_id: Mapped[int] = mapped_column(ForeignKey("memos.id"), nullable=False)
+    persona: Mapped[str] = mapped_column(String(60), nullable=False)
+    vote: Mapped[str] = mapped_column(String(20), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Venture(Base):
+    """A funded venture. Created by the CEO when the Board votes FUND."""
+
+    __tablename__ = "ventures"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[int] = mapped_column(ForeignKey("ideas.id"), nullable=False)
+    memo_id: Mapped[int] = mapped_column(ForeignKey("memos.id"), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    charter: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(40), default="chartered", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AgentRun(Base):

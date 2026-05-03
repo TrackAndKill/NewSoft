@@ -26,6 +26,11 @@ export const api = {
       body: JSON.stringify({ approve, decided_by: "founder" }),
     }),
   triggerDiscovery: () => req<any>("/api/discovery/run", { method: "POST" }),
+  triggerBoard: () => req<any>("/api/board/run", { method: "POST" }),
+  boardReviews: (memoId?: number) =>
+    req<any[]>(`/api/board/reviews${memoId ? `?memo_id=${memoId}` : ""}`),
+  ventures: () => req<any[]>("/api/ventures"),
+  venture: (slug: string) => req<any>(`/api/ventures/${slug}`),
   kill: () => req<any>("/api/system/kill", { method: "POST" }),
   setSystem: (patch: Record<string, unknown>) =>
     req<any>("/api/system", {

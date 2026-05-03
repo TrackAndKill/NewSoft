@@ -1,8 +1,14 @@
-# Caddy auto-provisions a Let's Encrypt cert for this hostname.
-# Point an A record for firm.profithub.me at this VM's IPv4 first.
+# Auto-TLS for firm.profithub.me. The auth hash is supplied via the
+# NEWSOFT_BASIC_HASH env var (a bcrypt hash from `caddy hash-password`),
+# loaded from /opt/newsoft/.env via a systemd drop-in for caddy.service.
 
 firm.profithub.me {
     encode gzip
+
+    basicauth * {
+        founder {$NEWSOFT_BASIC_HASH}
+    }
+
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
     }

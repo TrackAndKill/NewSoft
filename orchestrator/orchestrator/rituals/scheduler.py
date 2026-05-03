@@ -3,9 +3,11 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
+from orchestrator.agents.board import review_memo
+from orchestrator.agents.ceo import charter_venture
 from orchestrator.agents.discovery import run_discovery
 from orchestrator.budget import SystemHalted, check_active
-from orchestrator.db.models import Event, Goal
+from orchestrator.db.models import BoardReview, Event, Goal, Memo, Venture
 from orchestrator.db.session import session_scope
 
 log = logging.getLogger("rituals")
@@ -60,8 +62,45 @@ def discovery_tick() -> None:
             )
 
 
+def board_tick() -> None:
+    """Process any memo without a Board decision yet, then charter if FUND."""
+    try:
+        with session_scope() as s:
+            check_active(s)
+            pending = s.scalars(
+                select(Memo).where(Memo.decision == "pending").order_by(Memo.created_at.asc())
+            ).all()
+            memo_ids = [m.id for m in pending]
+    except SystemHalted:
+        log.info("System halted; skipping board tick.")
+        return
+
+    for memo_id in memo_ids:
+        try:
+            outcome = review_memo(memo_id)
+        except Exception as e:
+            log.exception("review_memo(%s) failed", memo_id)
+            with session_scope() as s:
+                s.add(Event(kind="error", actor="board", message=f"Board review failed for memo {memo_id}: {e}"))
+            continue
+
+        if outcome.decision == "fund":
+            with session_scope() as s:
+                exists = s.scalars(select(Venture).where(Venture.memo_id == memo_id)).first()
+            if exists is not None:
+                continue
+            try:
+                charter_venture(memo_id)
+            except Exception as e:
+                log.exception("charter_venture(%s) failed", memo_id)
+                with session_scope() as s:
+                    s.add(Event(kind="error", actor="ceo", message=f"Charter failed for memo {memo_id}: {e}"))
+
+
 def start_scheduler() -> None:
     # Phase 1: hourly discovery tick. Cheap with caps in place.
     scheduler.add_job(discovery_tick, "interval", hours=1, id="discovery_tick", replace_existing=True)
+    # Phase 2: board reviews any pending memo every 15 minutes.
+    scheduler.add_job(board_tick, "interval", minutes=15, id="board_tick", replace_existing=True)
     scheduler.start()
     log.info("Scheduler started.")

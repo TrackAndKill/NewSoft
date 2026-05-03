@@ -9,9 +9,18 @@ from sqlalchemy import desc, select
 
 from orchestrator.agents.discovery import run_discovery
 from orchestrator.db.init_db import init_db
-from orchestrator.db.models import Approval, Event, Goal, Idea, Memo, SystemState
+from orchestrator.db.models import (
+    Approval,
+    BoardReview,
+    Event,
+    Goal,
+    Idea,
+    Memo,
+    SystemState,
+    Venture,
+)
 from orchestrator.db.session import session_scope
-from orchestrator.rituals.scheduler import discovery_tick, start_scheduler
+from orchestrator.rituals.scheduler import board_tick, discovery_tick, start_scheduler
 
 
 @asynccontextmanager
@@ -113,6 +122,12 @@ def trigger_discovery(background: BackgroundTasks) -> dict:
     return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
 
 
+@app.post("/api/board/run")
+def trigger_board(background: BackgroundTasks) -> dict:
+    background.add_task(board_tick)
+    return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
+
+
 @app.get("/api/ideas")
 def list_ideas(limit: int = 50) -> list[dict]:
     with session_scope() as s:
@@ -125,6 +140,42 @@ def list_memos(limit: int = 20) -> list[dict]:
     with session_scope() as s:
         rows = s.scalars(select(Memo).order_by(desc(Memo.created_at)).limit(limit)).all()
         return [_row_to_dict(r) for r in rows]
+
+
+@app.get("/api/board/reviews")
+def list_board_reviews(limit: int = 100, memo_id: int | None = None) -> list[dict]:
+    with session_scope() as s:
+        q = select(BoardReview).order_by(desc(BoardReview.created_at)).limit(limit)
+        if memo_id is not None:
+            q = select(BoardReview).where(BoardReview.memo_id == memo_id).order_by(BoardReview.created_at.asc())
+        rows = s.scalars(q).all()
+        return [_row_to_dict(r) for r in rows]
+
+
+@app.get("/api/ventures")
+def list_ventures() -> list[dict]:
+    with session_scope() as s:
+        rows = s.scalars(select(Venture).order_by(desc(Venture.created_at))).all()
+        return [_row_to_dict(r) for r in rows]
+
+
+@app.get("/api/ventures/{slug}")
+def get_venture(slug: str) -> dict:
+    with session_scope() as s:
+        v = s.scalar(select(Venture).where(Venture.slug == slug))
+        if v is None:
+            raise HTTPException(404, "venture not found")
+        memo = s.get(Memo, v.memo_id)
+        idea = s.get(Idea, v.idea_id)
+        reviews = s.scalars(
+            select(BoardReview).where(BoardReview.memo_id == v.memo_id).order_by(BoardReview.created_at.asc())
+        ).all()
+        return {
+            "venture": _row_to_dict(v),
+            "memo": _row_to_dict(memo) if memo else None,
+            "idea": _row_to_dict(idea) if idea else None,
+            "reviews": [_row_to_dict(r) for r in reviews],
+        }
 
 
 @app.get("/api/events")
