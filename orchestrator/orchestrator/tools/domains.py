@@ -33,15 +33,22 @@ def _post(path: str, payload: dict[str, Any] | None = None) -> dict:
     return data
 
 
+def _domain_response(payload: dict[str, Any]) -> dict[str, Any]:
+    """Porkbun wraps checkDomain fields under response on the live API."""
+    response = payload.get("response")
+    return response if isinstance(response, dict) else payload
+
+
 def _estimate_price(payload: dict[str, Any]) -> float:
-    for key in ("price", "registration_price", "registrationPrice"):
-        value = payload.get(key)
+    data = _domain_response(payload)
+    for key in ("price", "registration_price", "registrationPrice", "regularPrice"):
+        value = data.get(key)
         if value is not None:
             try:
                 return float(str(value).replace("$", ""))
             except ValueError:
                 pass
-    prices = payload.get("prices") if isinstance(payload.get("prices"), dict) else {}
+    prices = data.get("prices") if isinstance(data.get("prices"), dict) else {}
     for key in ("registration", "register", "price"):
         if key in prices:
             try:
@@ -56,9 +63,18 @@ def domain_check(name: str) -> dict:
     if not domain or "." not in domain:
         raise ValueError("Domain name must include a TLD")
     data = _post(f"/domain/checkDomain/{domain}")
+    response = _domain_response(data)
     price = _estimate_price(data)
-    available = str(data.get("avail") or data.get("available") or "").lower() in {"yes", "true", "1"}
-    return {"name": domain, "available": available, "price_usd": price, "currency": "USD", "raw_status": data.get("status")}
+    available = str(response.get("avail") or response.get("available") or "").lower() in {"yes", "true", "1"}
+    return {
+        "name": domain,
+        "available": available,
+        "price_usd": price,
+        "cost_pennies": int(round(price * 100)),
+        "currency": "USD",
+        "raw_status": data.get("status"),
+        "min_duration": response.get("minDuration"),
+    }
 
 
 def list_dns_records(domain: str) -> list[dict]:
@@ -81,23 +97,29 @@ def domain_register(name: str, years: int = 1) -> dict:
     domain = name.strip().lower()
     years = max(1, int(years or 1))
     estimated = 12.0
+    cost_pennies = None
     if settings.porkbun_api_key and settings.porkbun_api_secret:
-        try:
-            estimated = float(domain_check(domain).get("price_usd") or estimated) * years
-        except Exception:
-            estimated = 12.0 * years
-    if estimated > MAX_PER_ACTION_USD:
-        raise MoneyCapExceeded(f"Estimated domain registration ${estimated:.2f} exceeds per-action cap ${MAX_PER_ACTION_USD:.2f}")
+        check = domain_check(domain)
+        if not check.get("available"):
+            raise RuntimeError(f"Domain {domain} is not available")
+        estimated = float(check.get("price_usd") or estimated)
+        cost_pennies = int(check.get("cost_pennies") or round(estimated * 100))
+    amount = estimated * years
+    if amount > MAX_PER_ACTION_USD:
+        raise MoneyCapExceeded(f"Estimated domain registration ${amount:.2f} exceeds per-action cap ${MAX_PER_ACTION_USD:.2f}")
     with session_scope() as s:
         existing = s.scalars(select(Approval).where(Approval.action == "register_domain", Approval.status == "pending")).all()
         for approval in existing:
             payload = approval.payload or {}
             if payload.get("name") == domain and int(payload.get("years", 1)) == years:
-                return {"approval_id": approval.id, "status": "pending_approval", "estimated_usd": payload.get("estimated_usd", estimated)}
-        approval = Approval(requested_by="domain_tool", action="register_domain", payload={"name": domain, "years": years, "estimated_usd": estimated}, rationale=f"Register {domain} for {years} year(s); estimated ${estimated:.2f}.", status="pending")
+                return {"approval_id": approval.id, "status": "pending_approval", "estimated_usd": payload.get("estimated_usd", amount)}
+        payload = {"name": domain, "years": years, "estimated_usd": amount}
+        if cost_pennies is not None:
+            payload["cost_pennies"] = cost_pennies
+        approval = Approval(requested_by="domain_tool", action="register_domain", payload=payload, rationale=f"Register {domain} for {years} year(s); estimated ${amount:.2f}.", status="pending")
         s.add(approval); s.flush()
-        s.add(Event(kind="approval_requested", actor="domain_tool", message=f"Domain registration approval #{approval.id}: {domain}", payload={"approval_id": approval.id, "estimated_usd": estimated}))
-        return {"approval_id": approval.id, "status": "pending_approval", "estimated_usd": estimated}
+        s.add(Event(kind="approval_requested", actor="domain_tool", message=f"Domain registration approval #{approval.id}: {domain}", payload={"approval_id": approval.id, "estimated_usd": amount}))
+        return {"approval_id": approval.id, "status": "pending_approval", "estimated_usd": amount}
 
 
 def _transaction_dict(tx: MoneyTransaction) -> dict:
@@ -122,6 +144,7 @@ def execute_domain_registration(approval_id: int) -> dict:
         domain = str(payload.get("name") or "").strip().lower()
         years = int(payload.get("years") or 1)
         amount = float(payload.get("estimated_usd") or 12.0)
+        cost_pennies = int(payload.get("cost_pennies") or round(amount * 100))
         check_money_budget(s, amount)
         state = s.get(SystemState, 1)
         dry_run = bool(state.dry_run if state else settings.dry_run)
@@ -130,12 +153,16 @@ def execute_domain_registration(approval_id: int) -> dict:
 
     result: dict[str, Any]
     status = "simulated"
-    if dry_run or not (settings.porkbun_api_key and settings.porkbun_api_secret):
-        result = {"dry_run": True, "domain": domain, "years": years, "message": "Simulated domain registration; no Porkbun call made."}
-    else:
-        data = _post(f"/domain/create/{domain}", {"years": years})
-        result = {"body": data}
-        status = "done"
+    try:
+        if dry_run or not (settings.porkbun_api_key and settings.porkbun_api_secret):
+            result = {"dry_run": True, "domain": domain, "years": years, "message": "Simulated domain registration; no Porkbun call made."}
+        else:
+            data = _post(f"/domain/create/{domain}", {"cost": cost_pennies, "agreeToTerms": "yes"})
+            result = {"body": data}
+            status = "done"
+    except Exception as exc:
+        result = {"error": str(exc)[:500], "domain": domain, "years": years}
+        status = "failed"
 
     with session_scope() as s:
         tx = s.get(MoneyTransaction, tx_id)
