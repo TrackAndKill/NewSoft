@@ -270,6 +270,15 @@ def execute_site_approval(approval_id: int) -> dict:
         result = request_dns(site_id)
     elif action == "deploy_landing_page":
         result = stage_site(site_id)
+        # Keep the state machine moving after deploy approval. If DNS was already
+        # requested, staging should not reset the site permanently back to staging.
+        with session_scope() as s:
+            site = s.get(Site, site_id)
+            if site and site.domain:
+                site.status = "dns_pending"
+                site.updated_at = datetime.now(timezone.utc)
+                s.add(Event(kind="site_deploy_approved", actor="sites", message=f"Deploy approved for site #{site_id}; awaiting DNS/site tick.", payload={"site_id": site_id, "domain": site.domain}))
+                result = _site_dict(site)
     elif action == "teardown_site":
         result = teardown_site(site_id)
     else:
