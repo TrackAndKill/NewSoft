@@ -5,7 +5,9 @@ import re
 from dataclasses import dataclass
 
 from orchestrator.config import settings
-from orchestrator.db.models import Event, Idea, Memo
+from sqlalchemy import select
+
+from orchestrator.db.models import Event, Idea, Memo, ToolCall
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.search import TOOLS as SEARCH_TOOLS
@@ -18,17 +20,19 @@ SCOUT = AgentSpec(
     max_tokens=2400,
     tools=SEARCH_TOOLS if search_tools_available() else [],
     system_prompt=(
-        "You are the Market Scout for an autonomous venture firm. "
-        "Given a founder goal, propose candidate small-business / SaaS ideas "
-        "the firm could pursue. Favor ideas with: small initial capex, fast "
-        "time-to-revenue, narrow ICP, and at least one channel that can be "
-        "tested with under $200. If web_search/fetch_url tools are available, "
-        "use web_search to find recent signals (Reddit threads, Indie Hackers, "
-        "ProductHunt, GitHub issues, niche forums). fetch_url for any URL whose "
-        "snippet looks promising. Cite at least one URL per idea in source. "
-        "If tools are unavailable, fall back to priors-only mode and mark source accordingly. "
-        "Return STRICT JSON: "
-        '{"ideas":[{"title":"...","summary":"...","source":"URL or priors-only note"}]}. '
+        "You are the Market Scout for an autonomous venture firm. Given a "
+        "founder goal, propose candidate small-business / SaaS ideas. Favor "
+        "ideas with: small initial capex, fast time-to-revenue, narrow ICP, "
+        "and at least one channel testable for under $200.\n\n"
+        "Workflow:\n"
+        "  1. Make 2-4 web_search calls to find recent signals (Reddit,\n"
+        "     Indie Hackers, ProductHunt, Hacker News, GitHub trending,\n"
+        "     niche forums). Use fetch_url on the most promising hit.\n"
+        "  2. Synthesize 5 candidate ideas grounded in what you found.\n"
+        "  3. Each idea's source field MUST be a URL from your tool calls.\n"
+        "     If you cannot ground an idea in a real URL, omit it.\n\n"
+        "Return STRICT JSON:\n"
+        '{"ideas":[{"title":"...","summary":"...","source":"https://..."}]}\n'
         "No prose outside the JSON."
     ),
 )
@@ -80,6 +84,88 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
+def _backfill_source_urls(scout_run_id: int, ideas: list[dict]) -> list[dict]:
+    """Ensure every idea's source contains a URL; drop those that can't."""
+    urls = _search_result_urls(scout_run_id)
+    out = []
+    for idea in ideas:
+        src = (idea.get("source") or "").strip()
+        if "http" in src:
+            out.append(idea)
+            continue
+        if urls:
+            idea["source"] = urls.pop(0)
+            out.append(idea)
+        else:
+            # No URL anywhere; drop rather than persist a fake source.
+            continue
+    return out
+
+
+def _search_result_urls(scout_run_id: int) -> list[str]:
+    with session_scope() as s:
+        rows = s.scalars(
+            select(ToolCall).where(
+                ToolCall.agent_run_id == scout_run_id,
+                ToolCall.tool == "web_search",
+            )
+        ).all()
+        urls: list[str] = []
+        for tc in rows:
+            result = tc.result or {}
+            candidates = result.get("results")
+            data = result.get("data")
+            if candidates is None and isinstance(data, dict):
+                candidates = data.get("results")
+            if candidates is None and isinstance(data, list):
+                candidates = data
+            for r in candidates or []:
+                u = r.get("url") if isinstance(r, dict) else None
+                if u:
+                    urls.append(u)
+    return urls
+
+
+def _ideas_from_tool_calls(scout_run_id: int) -> list[dict]:
+    """Fallback ideas when Scout used tools but failed to emit strict JSON."""
+    with session_scope() as s:
+        rows = s.scalars(
+            select(ToolCall).where(
+                ToolCall.agent_run_id == scout_run_id,
+                ToolCall.tool == "web_search",
+            )
+        ).all()
+        ideas: list[dict] = []
+        seen: set[str] = set()
+        for tc in rows:
+            result = tc.result or {}
+            candidates = result.get("results")
+            data = result.get("data")
+            if candidates is None and isinstance(data, dict):
+                candidates = data.get("results")
+            if candidates is None and isinstance(data, list):
+                candidates = data
+            for r in candidates or []:
+                if not isinstance(r, dict):
+                    continue
+                url = r.get("url")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                title = r.get("title") or "URL-grounded market signal"
+                snippet = r.get("snippet") or "Scout found this URL via web_search."
+                ideas.append(
+                    {
+                        "title": title[:160],
+                        "summary": snippet[:1200],
+                        "source": url,
+                    }
+                )
+                if len(ideas) >= 5:
+                    return ideas
+    return ideas
+
+
 def run_discovery(goal_id: int, goal_text: str) -> DiscoveryResult:
     total_cost = 0.0
 
@@ -88,7 +174,39 @@ def run_discovery(goal_id: int, goal_text: str) -> DiscoveryResult:
         [{"role": "user", "content": f"Founder goal:\n{goal_text}\n\nPropose 5 candidate ideas."}],
     )
     total_cost += scout_out.cost_usd
-    scout_data = _parse_json(scout_out.text)
+    try:
+        scout_data = _parse_json(scout_out.text)
+    except Exception as e:
+        scout_data = {"ideas": _ideas_from_tool_calls(scout_out.run_id)}
+        with session_scope() as s:
+            s.add(
+                Event(
+                    kind="discovery_scout_json_fallback",
+                    actor="market_scout",
+                    message="Scout emitted non-JSON after tool use; synthesized URL-grounded ideas from web_search results.",
+                    payload={"run_id": scout_out.run_id, "error": str(e)[:500]},
+                )
+            )
+    scout_data["ideas"] = _backfill_source_urls(
+        scout_out.run_id, scout_data.get("ideas", [])
+    )
+    if not scout_data["ideas"]:
+        # Log and bail cleanly — no point running analyst on zero ideas.
+        with session_scope() as s:
+            s.add(
+                Event(
+                    kind="discovery_no_urls",
+                    actor="market_scout",
+                    message="Discovery aborted: scout produced no URL-grounded ideas.",
+                    payload={"run_id": scout_out.run_id},
+                )
+            )
+        return DiscoveryResult(
+            idea_ids=[],
+            top_idea_id=None,
+            memo_id=None,
+            total_cost_usd=scout_out.cost_usd,
+        )
 
     analyst_out = run_agent(
         ANALYST,
