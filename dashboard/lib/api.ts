@@ -27,12 +27,16 @@ export const api = {
   agentRun: (id: number | string) => req<any>(`/api/agent_runs/${id}`),
   experiments: () => req<any[]>("/api/experiments"),
   approvals: (status = "pending") => req<any[]>(`/api/approvals?status=${status}`),
-  decide: (id: number, approve: boolean) =>
+  decide: (id: number, approve: boolean, execute_live?: boolean | null) =>
     req<any>(`/api/approvals/${id}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approve, decided_by: "founder" }),
+      body: JSON.stringify({ approve, decided_by: "founder", execute_live }),
     }),
+  postmortems: () => req<any[]>("/api/postmortems"),
+  venturePostmortem: (slug: string) => req<any>(`/api/ventures/${slug}/postmortem`),
+  createPostmortem: (slug: string) => req<any>(`/api/ventures/${slug}/postmortem`, { method: "POST" }),
+  triggerKillLoop: () => req<any>("/api/kill_loop/run", { method: "POST" }),
   triggerDiscovery: () => req<any>("/api/discovery/run", { method: "POST" }),
   triggerBoard: () => req<any>("/api/board/run", { method: "POST" }),
   triggerValidator: () => req<any>("/api/validator/run", { method: "POST" }),

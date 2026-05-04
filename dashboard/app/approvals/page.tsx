@@ -3,6 +3,21 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
+const SIDE_EFFECTFUL = new Set([
+  "register_domain",
+  "configure_dns",
+  "deploy_landing_page",
+  "run_experiment",
+  "kill_venture",
+  "teardown_site",
+]);
+
+function moneyLabel(a: any) {
+  const estimated = a.payload?.estimated_usd;
+  if (estimated == null) return "live";
+  return `live $${Number(estimated).toFixed(2)}`;
+}
+
 export default function ApprovalsPage() {
   const [items, setItems] = useState<any[]>([]);
   async function load() {
@@ -14,9 +29,13 @@ export default function ApprovalsPage() {
   return (
     <>
       <h1>Pending approvals</h1>
+      <p className="muted">
+        Side-effectful approvals can be forced to simulate or execute live per approval. Global dry-run stays sticky.
+      </p>
       {items.length === 0 && <div className="muted">Nothing to approve.</div>}
       {items.map((a) => {
         const estimated = a.payload?.estimated_usd;
+        const sideEffectful = SIDE_EFFECTFUL.has(a.action);
         return (
           <div key={a.id} className="card">
             <div className="row" style={{ justifyContent: "space-between" }}>
@@ -30,7 +49,14 @@ export default function ApprovalsPage() {
                 )}
               </div>
               <div className="row">
-                <button onClick={() => api.decide(a.id, true).then(load)}>Approve</button>
+                {sideEffectful ? (
+                  <>
+                    <button onClick={() => api.decide(a.id, true, false).then(load)}>Approve (simulate)</button>
+                    <button onClick={() => api.decide(a.id, true, true).then(load)}>Approve ({moneyLabel(a)})</button>
+                  </>
+                ) : (
+                  <button onClick={() => api.decide(a.id, true, null).then(load)}>Approve</button>
+                )}
                 <button className="danger" onClick={() => api.decide(a.id, false).then(load)}>
                   Reject
                 </button>

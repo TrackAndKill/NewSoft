@@ -76,6 +76,11 @@ The script:
 - Drops a Caddyfile template at `/opt/newsoft/infra/Caddyfile` for HTTPS
   termination on a subdomain
 
+## Runbooks
+
+- `infra/UPGRADE_PHASE6.md` — Phase 6 execute-live/postmortem/audit upgrade checklist.
+- `infra/KEY_ROTATION.md` — Rotation procedures for Anthropic, Brave, Resend, Porkbun, dashboard auth, lead pepper, and GitHub deploy keys.
+
 ## Safety rails
 
 - All money-moving / side-effectful tool calls are dry-run by default

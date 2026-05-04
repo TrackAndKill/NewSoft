@@ -10,6 +10,10 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("system_state", "money_spend_today_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
     ("system_state", "money_daily_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 50.0"),
     ("system_state", "money_spend_day", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()"),
+    ("approvals", "execute_live", "BOOLEAN"),
+    ("ventures", "kill_criteria_json", "JSON"),
+    ("ventures", "killed_at", "TIMESTAMP WITH TIME ZONE"),
+    ("ventures", "kill_reason", "TEXT"),
 ]
 
 

@@ -14,15 +14,16 @@ from orchestrator.agents.validator import run_experiment
 from orchestrator.db.init_db import init_db
 from orchestrator.db.models import (
     AgentRun, Approval, BoardReview, Event, Experiment, Goal, Idea, Lead, Memo,
-    MoneyTransaction, Plan, Site, SiteContent, SystemState, Task, ToolCall, Venture,
+    MoneyTransaction, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
 )
 from orchestrator.db.session import session_scope
 from orchestrator.digest import send_digest
 from orchestrator.money import MAX_PER_ACTION_USD
 from orchestrator.config import settings
-from orchestrator.rituals.scheduler import board_tick, discovery_tick, site_tick, start_scheduler, validator_tick, venture_tick
+from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, site_tick, start_scheduler, validator_tick, venture_tick
 from orchestrator.tools.domains import execute_domain_registration
 from orchestrator.tools.sites import execute_site_approval
+from orchestrator.agents.postmortem_writer import write_postmortem
 
 _rate_hits: dict[tuple[int, str], list[datetime]] = {}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -40,6 +41,7 @@ class GoalIn(BaseModel):
 class ApprovalDecision(BaseModel):
     decided_by: str = "founder"
     approve: bool
+    execute_live: bool | None = None
 class SystemUpdate(BaseModel):
     active: bool | None = None
     dry_run: bool | None = None
@@ -131,6 +133,9 @@ def trigger_site(background: BackgroundTasks) -> dict:
 @app.post("/api/digest/run")
 def trigger_digest(background: BackgroundTasks) -> dict:
     background.add_task(send_digest); return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
+@app.post("/api/kill_loop/run")
+def trigger_kill_loop() -> dict:
+    return kill_loop_tick()
 
 @app.get("/api/ideas")
 def list_ideas(limit: int = 50) -> list[dict]:
@@ -158,10 +163,36 @@ def get_venture(slug: str) -> dict:
         plan = s.scalars(select(Plan).where(Plan.venture_id == v.id).order_by(desc(Plan.created_at))).first()
         tasks = s.scalars(select(Task).where(Task.venture_id == v.id).order_by(Task.created_at.asc())).all()
         site = s.scalars(select(Site).where(Site.venture_id == v.id).order_by(desc(Site.created_at))).first()
-        return {"venture": _row_to_dict(v), "memo": _row_to_dict(memo) if memo else None, "idea": _row_to_dict(idea) if idea else None, "reviews": [_row_to_dict(r) for r in reviews], "plan": _row_to_dict(plan) if plan else None, "tasks": [_row_to_dict(t) for t in tasks], "site": _row_to_dict(site) if site else None}
+        postmortem = s.scalars(select(Postmortem).where(Postmortem.venture_id == v.id).order_by(desc(Postmortem.created_at))).first()
+        return {"venture": _row_to_dict(v), "memo": _row_to_dict(memo) if memo else None, "idea": _row_to_dict(idea) if idea else None, "reviews": [_row_to_dict(r) for r in reviews], "plan": _row_to_dict(plan) if plan else None, "tasks": [_row_to_dict(t) for t in tasks], "site": _row_to_dict(site) if site else None, "postmortem": _row_to_dict(postmortem) if postmortem else None}
 @app.get("/api/ventures/{slug}/plan")
 def get_venture_plan(slug: str) -> dict:
     data = get_venture(slug); return {"venture": data["venture"], "plan": data.get("plan"), "tasks": data.get("tasks", [])}
+@app.get("/api/ventures/{slug}/postmortem")
+def get_venture_postmortem(slug: str) -> dict:
+    data = get_venture(slug)
+    if not data.get("postmortem"):
+        raise HTTPException(404, "postmortem not found")
+    return {"venture": data["venture"], "postmortem": data["postmortem"]}
+@app.post("/api/ventures/{slug}/postmortem")
+def create_venture_postmortem(slug: str) -> dict:
+    with session_scope() as s:
+        venture = s.scalar(select(Venture).where(Venture.slug == slug))
+        if venture is None: raise HTTPException(404, "venture not found")
+        venture_id = venture.id
+        reason = venture.kill_reason or "Manual postmortem requested by operator."
+    postmortem_id = write_postmortem(venture_id, reason)
+    with session_scope() as s:
+        row = s.get(Postmortem, postmortem_id)
+        return _row_to_dict(row)
+@app.get("/api/postmortems")
+def list_postmortems() -> list[dict]:
+    with session_scope() as s:
+        rows = s.execute(select(Postmortem, Venture).join(Venture, Venture.id == Postmortem.venture_id).order_by(desc(Postmortem.created_at))).all()
+        out=[]
+        for pm, v in rows:
+            data = _row_to_dict(pm); data["venture"] = _row_to_dict(v); out.append(data)
+        return out
 
 @app.get("/api/sites")
 def list_sites() -> list[dict]:
@@ -224,21 +255,56 @@ def list_approvals(status: str = "pending") -> list[dict]:
 
 @app.post("/api/approvals/{approval_id}")
 def decide_approval(approval_id: int, payload: ApprovalDecision, background: BackgroundTasks) -> dict:
-    should_run_experiment = should_register_domain = should_site_action = False
+    should_run_experiment = should_register_domain = should_site_action = should_kill_venture = False
+    force_live = payload.execute_live if payload.approve else None
     with session_scope() as s:
         a = s.get(Approval, approval_id)
         if a is None: raise HTTPException(404, "approval not found")
-        if a.status in {"approved", "rejected"} and not (payload.approve and a.action == "register_domain"):
+        if a.status in {"approved", "rejected"}:
             return _row_to_dict(a)
-        a.status = "approved" if payload.approve else "rejected"; a.decided_by = payload.decided_by; a.decided_at = datetime.now(timezone.utc)
+        a.status = "approved" if payload.approve else "rejected"
+        a.execute_live = force_live
+        a.decided_by = payload.decided_by
+        a.decided_at = datetime.now(timezone.utc)
         should_run_experiment = a.status == "approved" and a.action == "run_experiment"
         should_register_domain = a.status == "approved" and a.action == "register_domain"
         should_site_action = a.status == "approved" and a.action in {"configure_dns", "deploy_landing_page", "teardown_site"}
-        s.add(Event(kind="approval_decided", actor=payload.decided_by, message=f"Approval #{a.id} {a.status}: {a.action}", payload={"approval_id": a.id})); data = _row_to_dict(a)
+        should_kill_venture = a.status == "approved" and a.action == "kill_venture"
+        execute_mode = "live" if force_live is True else "simulated" if force_live is False else "system"
+        s.add(Event(kind="approval_decided", actor=payload.decided_by, message=f"Approval #{a.id} {a.status}: {a.action}", payload={"approval_id": a.id, "execute_mode": execute_mode}))
+        data = _row_to_dict(a)
     if should_run_experiment: background.add_task(run_experiment, approval_id)
-    if should_register_domain: background.add_task(execute_domain_registration, approval_id)
-    if should_site_action: background.add_task(execute_site_approval, approval_id)
+    if should_register_domain: background.add_task(execute_domain_registration, approval_id, force_live)
+    if should_site_action: background.add_task(execute_site_approval, approval_id, force_live)
+    if should_kill_venture: background.add_task(execute_kill_venture_approval, approval_id)
     return data
+
+
+def execute_kill_venture_approval(approval_id: int) -> dict:
+    with session_scope() as s:
+        approval = s.get(Approval, approval_id)
+        if approval is None:
+            raise ValueError(f"Approval {approval_id} not found")
+        if approval.status != "approved" or approval.action != "kill_venture":
+            raise ValueError(f"Approval {approval_id} must be approved kill_venture")
+        payload = approval.payload or {}
+        venture_id = int(payload.get("venture_id") or 0)
+        rationale = str(payload.get("rationale") or approval.rationale or "Kill venture approved by operator.")
+        venture = s.get(Venture, venture_id)
+        if venture is None:
+            raise ValueError(f"Venture {venture_id} not found")
+    postmortem_id = write_postmortem(venture_id, rationale)
+    with session_scope() as s:
+        venture = s.get(Venture, venture_id)
+        venture.status = "killed"
+        venture.killed_at = datetime.now(timezone.utc)
+        venture.kill_reason = rationale
+        tasks = s.scalars(select(Task).where(Task.approval_id == approval_id)).all()
+        for task in tasks:
+            task.status = "done"
+            task.completed_at = datetime.now(timezone.utc)
+        s.add(Event(kind="venture_killed", actor="approval_dispatcher", message=f"Venture #{venture_id} killed after approval #{approval_id}; postmortem #{postmortem_id}", payload={"venture_id": venture_id, "approval_id": approval_id, "postmortem_id": postmortem_id}))
+        return {"venture_id": venture_id, "postmortem_id": postmortem_id, "status": "killed"}
 
 @app.get("/api/money/status")
 def money_status() -> dict:

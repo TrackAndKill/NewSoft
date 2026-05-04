@@ -66,12 +66,16 @@ def stage_site(site_id: int) -> dict:
         return _site_dict(site)
 
 
-def _dry_run(s) -> bool:
+def _dry_run(s, force_live: bool | None = None) -> bool:
+    if force_live is True:
+        return False
+    if force_live is False:
+        return True
     state = s.get(SystemState, 1)
     return bool(state.dry_run if state else settings.dry_run)
 
 
-def request_dns(site_id: int) -> dict:
+def request_dns(site_id: int, force_live: bool | None = None) -> dict:
     with session_scope() as s:
         site = s.get(Site, site_id)
         if site is None:
@@ -79,7 +83,7 @@ def request_dns(site_id: int) -> dict:
         if not site.domain:
             raise ValueError("site has no domain")
         domain, site_id_val = site.domain, site.id
-        dry_run = _dry_run(s)
+        dry_run = _dry_run(s, force_live)
         target_ip = settings.vm_ipv4.strip()
         if not target_ip:
             dry_run = True
@@ -152,7 +156,7 @@ server {{
 '''
 
 
-def install_nginx_vhost(site_id: int) -> dict:
+def install_nginx_vhost(site_id: int, force_live: bool | None = None) -> dict:
     with session_scope() as s:
         site = s.get(Site, site_id)
         if site is None:
@@ -160,7 +164,7 @@ def install_nginx_vhost(site_id: int) -> dict:
         Path(settings.nginx_site_dir).mkdir(parents=True, exist_ok=True)
         conf_path = Path(settings.nginx_site_dir) / f"{site.slug}.conf"
         conf_path.write_text(_vhost_http(site), encoding="utf-8")
-        dry_run = _dry_run(s)
+        dry_run = _dry_run(s, force_live)
         if not dry_run:
             subprocess.run(["sudo", "/usr/local/sbin/newsoft-nginx-reload"], check=True, timeout=30)
         site.status = "nginx_ready" if not dry_run else "nginx_ready (simulated)"
@@ -170,12 +174,12 @@ def install_nginx_vhost(site_id: int) -> dict:
         return _site_dict(site)
 
 
-def issue_cert(site_id: int) -> dict:
+def issue_cert(site_id: int, force_live: bool | None = None) -> dict:
     with session_scope() as s:
         site = s.get(Site, site_id)
         if site is None:
             raise ValueError(f"Site {site_id} not found")
-        dry_run = _dry_run(s) or not site.domain or not settings.certbot_email
+        dry_run = _dry_run(s, force_live) or not site.domain or not settings.certbot_email
         site.status = "tls_pending"
         s.add(Event(kind="site_tls_pending", actor="sites", message=f"TLS pending for site #{site.id}", payload={"site_id": site.id, "dry_run": dry_run}))
         s.flush()
@@ -192,7 +196,7 @@ def issue_cert(site_id: int) -> dict:
         return _site_dict(site)
 
 
-def teardown_site(site_id: int) -> dict:
+def teardown_site(site_id: int, force_live: bool | None = None) -> dict:
     with session_scope() as s:
         site = s.get(Site, site_id)
         if site is None:
@@ -200,7 +204,7 @@ def teardown_site(site_id: int) -> dict:
         conf_path = Path(settings.nginx_site_dir) / f"{site.slug}.conf"
         if conf_path.exists():
             conf_path.unlink()
-        if not _dry_run(s):
+        if not _dry_run(s, force_live):
             subprocess.run(["sudo", "/usr/local/sbin/newsoft-nginx-reload"], check=True, timeout=30)
         site.status = "failed"
         site.last_error = "torn down"
@@ -257,7 +261,7 @@ def request_site_approval(site_id: int, action: str, requested_by: str = "engine
         return approval.id
 
 
-def execute_site_approval(approval_id: int) -> dict:
+def execute_site_approval(approval_id: int, force_live: bool | None = None) -> dict:
     with session_scope() as s:
         approval = s.get(Approval, approval_id)
         if approval is None:
@@ -267,7 +271,7 @@ def execute_site_approval(approval_id: int) -> dict:
         action = approval.action
         site_id = int((approval.payload or {}).get("site_id") or 0)
     if action == "configure_dns":
-        result = request_dns(site_id)
+        result = request_dns(site_id, force_live=force_live)
     elif action == "deploy_landing_page":
         result = stage_site(site_id)
         # Keep the state machine moving after deploy approval. If DNS was already
@@ -280,10 +284,12 @@ def execute_site_approval(approval_id: int) -> dict:
                 s.add(Event(kind="site_deploy_approved", actor="sites", message=f"Deploy approved for site #{site_id}; awaiting DNS/site tick.", payload={"site_id": site_id, "domain": site.domain}))
                 result = _site_dict(site)
     elif action == "teardown_site":
-        result = teardown_site(site_id)
+        result = teardown_site(site_id, force_live=force_live)
     else:
         raise ValueError(f"Unsupported site approval action {action}")
     with session_scope() as s:
+        execute_mode = "live" if force_live is True else "simulated" if force_live is False else "system"
+        s.add(Event(kind="site_approval_executed", actor="sites", message=f"Site approval #{approval_id} executed: {action}", payload={"approval_id": approval_id, "action": action, "execute_mode": execute_mode}))
         tasks = s.scalars(select(Task).where(Task.approval_id == approval_id)).all()
         for task in tasks:
             task.status = "done" if action in {"configure_dns", "deploy_landing_page"} else "skipped"

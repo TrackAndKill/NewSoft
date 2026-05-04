@@ -19,13 +19,15 @@ export default function VenturePage({ params }: { params: Promise<{ slug: string
   }, [slug]);
 
   if (!data) return <div className="muted">Loading…</div>;
-  const { venture, memo, idea, reviews, plan, tasks = [] } = data;
+  const { venture, memo, idea, reviews, plan, tasks = [], postmortem } = data;
   return (
     <>
       <h1>{venture.name}</h1>
       <div className="row" style={{ gap: 8 }}>
         <span className="pill">{venture.status}</span>
         <span className="muted">{venture.slug}</span>
+        {venture.killed_at && <span className="pill">killed {new Date(venture.killed_at).toLocaleString()}</span>}
+        {venture.kill_reason && <span className="muted">{venture.kill_reason}</span>}
       </div>
 
       {data.site && <div className="card" style={{ marginTop: 16 }}>
@@ -35,6 +37,15 @@ export default function VenturePage({ params }: { params: Promise<{ slug: string
           <a href={`/sites/${data.site.slug}`}>Open site ops</a>
           {data.site.domain && <a href={`https://${data.site.domain}`} target="_blank">{data.site.domain}</a>}
         </div>
+      </div>}
+
+      {postmortem && <div className="card" style={{ marginTop: 16 }}>
+        <h2 style={{ marginTop: 0 }}>Postmortem</h2>
+        <div className="muted">Postmortem #{postmortem.id} · {new Date(postmortem.created_at).toLocaleString()}</div>
+        <h3>Lessons</h3>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{postmortem.lessons_md}</pre>
+        <h3>Full narrative</h3>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{postmortem.content_md}</pre>
       </div>}
 
       <div className="card" style={{ marginTop: 16 }}>

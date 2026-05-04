@@ -153,6 +153,61 @@ def site_tick() -> None:
         with session_scope() as s: s.add(Event(kind="error", actor="sites", message=f"Site tick failed: {e}"))
 
 
+
+def kill_loop_tick() -> dict:
+    """Weekly conservative kill review. Files approvals only; never kills directly."""
+    from orchestrator.agents.kill_evaluator import evaluate_venture
+
+    created: list[int] = []
+    evaluated = 0
+    try:
+        with session_scope() as s:
+            check_active(s)
+            ventures = s.scalars(select(Venture).where(Venture.status.in_(["chartered", "active"])).order_by(Venture.created_at.asc())).all()
+            venture_ids = [v.id for v in ventures]
+    except SystemHalted:
+        log.info("System halted; skipping kill loop tick.")
+        return {"evaluated": 0, "created_approvals": []}
+
+    for venture_id in venture_ids:
+        try:
+            with session_scope() as s:
+                existing = s.scalars(select(Approval).where(Approval.action == "kill_venture")).all()
+                if any((a.payload or {}).get("venture_id") == venture_id for a in existing):
+                    continue
+            result = evaluate_venture(venture_id)
+            evaluated += 1
+            if not result.get("should_kill"):
+                continue
+            with session_scope() as s:
+                venture = s.get(Venture, venture_id)
+                if venture is None or venture.status not in {"chartered", "active"}:
+                    continue
+                approval = Approval(
+                    requested_by="kill_evaluator",
+                    action="kill_venture",
+                    payload={
+                        "venture_id": venture_id,
+                        "criteria_hit": result.get("criteria_hit", []),
+                        "rationale": result.get("rationale", ""),
+                        "evidence": result.get("evidence", {}),
+                        "agent_run_id": result.get("agent_run_id"),
+                    },
+                    rationale=result.get("rationale") or f"Kill criteria hit for venture #{venture_id}",
+                    status="pending",
+                )
+                venture.status = "kill_pending"
+                s.add(approval); s.flush()
+                created.append(approval.id)
+                s.add(Event(kind="kill_approval_requested", actor="kill_evaluator", message=f"Kill approval #{approval.id} requested for venture #{venture_id}", payload={"venture_id": venture_id, "approval_id": approval.id, "criteria_hit": result.get("criteria_hit", [])}))
+        except Exception as e:
+            log.exception("kill loop failed for venture %s", venture_id)
+            with session_scope() as s: s.add(Event(kind="error", actor="kill_evaluator", message=f"Kill loop failed for venture {venture_id}: {e}"))
+    if not created:
+        with session_scope() as s:
+            s.add(Event(kind="no_kill_candidates", actor="kill_evaluator", message=f"Kill loop evaluated {evaluated} venture(s); no approvals filed.", payload={"evaluated": evaluated}))
+    return {"evaluated": evaluated, "created_approvals": created}
+
 def start_scheduler() -> None:
     scheduler.add_job(discovery_tick, "interval", hours=4, id="discovery_tick", replace_existing=True)
     scheduler.add_job(board_tick, "interval", minutes=15, id="board_tick", replace_existing=True)
@@ -160,5 +215,6 @@ def start_scheduler() -> None:
     scheduler.add_job(venture_tick, "interval", minutes=30, id="venture_tick", replace_existing=True)
     scheduler.add_job(site_tick, "interval", minutes=5, id="site_tick", replace_existing=True)
     scheduler.add_job(digest_tick, "cron", hour=8, minute=0, id="digest_tick", replace_existing=True)
+    scheduler.add_job(kill_loop_tick, "cron", day_of_week="sun", hour=9, minute=0, id="kill_loop_tick", replace_existing=True)
     if not scheduler.running: scheduler.start()
     log.info("Scheduler started.")

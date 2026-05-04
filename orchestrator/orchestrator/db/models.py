@@ -83,6 +83,9 @@ class Venture(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     charter: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(40), default="chartered", nullable=False)
+    kill_criteria_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    killed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    kill_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -125,6 +128,7 @@ class Approval(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    execute_live: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -157,6 +161,16 @@ class MoneyTransaction(Base):
     result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Postmortem(Base):
+    __tablename__ = "postmortems"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int] = mapped_column(ForeignKey("ventures.id"), nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, nullable=False)
+    lessons_md: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Plan(Base):

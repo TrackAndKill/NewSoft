@@ -114,8 +114,12 @@ def design_experiment(memo_id: int) -> Approval | None:
         return approval
 
 
-def run_experiment(approval_id: int) -> ExperimentRunResult:
-    """Run an approved read-only experiment and flip memo back to pending for Board re-vote."""
+def run_experiment(approval_id: int, force_live: bool | None = None) -> ExperimentRunResult:
+    """Run an approved read-only experiment and flip memo back to pending for Board re-vote.
+
+    force_live is accepted for the common approval dispatcher contract. The
+    experiment runner remains read-only in Phase 6.
+    """
     with session_scope() as s:
         approval = s.get(Approval, approval_id)
         if approval is None:

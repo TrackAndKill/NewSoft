@@ -126,7 +126,15 @@ def _transaction_dict(tx: MoneyTransaction) -> dict:
     return {c.name: getattr(tx, c.name) for c in tx.__table__.columns}
 
 
-def execute_domain_registration(approval_id: int) -> dict:
+def _resolve_dry_run(state: SystemState | None, force_live: bool | None = None) -> bool:
+    if force_live is True:
+        return False
+    if force_live is False:
+        return True
+    return bool(state.dry_run if state else settings.dry_run)
+
+
+def execute_domain_registration(approval_id: int, force_live: bool | None = None) -> dict:
     now = datetime.now(timezone.utc)
     with session_scope() as s:
         approval = s.get(Approval, approval_id)
@@ -147,7 +155,8 @@ def execute_domain_registration(approval_id: int) -> dict:
         cost_pennies = int(payload.get("cost_pennies") or round(amount * 100))
         check_money_budget(s, amount)
         state = s.get(SystemState, 1)
-        dry_run = bool(state.dry_run if state else settings.dry_run)
+        dry_run = _resolve_dry_run(state, force_live)
+        execute_mode = "live" if not dry_run else "simulated"
         tx = existing or MoneyTransaction(action="register_domain", amount_usd=amount, vendor="porkbun", idempotency_key=f"register:{domain}:{approval_id}", status="pending", approval_id=approval_id, result_json=None)
         s.add(tx); s.flush(); tx_id = tx.id
 
@@ -155,13 +164,13 @@ def execute_domain_registration(approval_id: int) -> dict:
     status = "simulated"
     try:
         if dry_run or not (settings.porkbun_api_key and settings.porkbun_api_secret):
-            result = {"dry_run": True, "domain": domain, "years": years, "message": "Simulated domain registration; no Porkbun call made."}
+            result = {"dry_run": True, "execute_mode": execute_mode, "domain": domain, "years": years, "message": "Simulated domain registration; no Porkbun call made."}
         else:
             data = _post(f"/domain/create/{domain}", {"cost": cost_pennies, "agreeToTerms": "yes"})
-            result = {"body": data}
+            result = {"dry_run": False, "execute_mode": execute_mode, "body": data}
             status = "done"
     except Exception as exc:
-        result = {"error": str(exc)[:500], "domain": domain, "years": years}
+        result = {"error": str(exc)[:500], "execute_mode": execute_mode, "domain": domain, "years": years}
         status = "failed"
 
     with session_scope() as s:
@@ -172,7 +181,7 @@ def execute_domain_registration(approval_id: int) -> dict:
         if status == "done":
             record_money_spend(s, tx.amount_usd)
         _sync_tasks_for_approval(s, approval_id, status)
-        s.add(Event(kind="money_transaction", actor="domain_tool", message=f"Domain registration {status}: {domain}", payload={"approval_id": approval_id, "transaction_id": tx.id, "amount_usd": tx.amount_usd, "status": status}))
+        s.add(Event(kind="money_transaction", actor="domain_tool", message=f"Domain registration {status}: {domain}", payload={"approval_id": approval_id, "transaction_id": tx.id, "amount_usd": tx.amount_usd, "status": status, "execute_mode": execute_mode}))
         return _transaction_dict(tx)
 
 
