@@ -19,11 +19,26 @@ def build_digest() -> dict:
     since = now - timedelta(hours=24)
     with session_scope() as s:
         state = s.get(SystemState, 1)
-        events = s.scalars(select(Event).where(Event.created_at >= since).order_by(desc(Event.created_at))).all()
-        approvals = s.scalars(select(Approval).where(Approval.status == "pending").order_by(Approval.created_at.asc())).all()
-        ideas = s.scalars(select(Idea).where(Idea.created_at >= since).order_by(desc(Idea.created_at)).limit(10)).all()
-        memos = s.scalars(select(Memo).where(Memo.created_at >= since).order_by(desc(Memo.created_at)).limit(10)).all()
-        ventures = s.scalars(select(Venture).where(Venture.created_at >= since).order_by(desc(Venture.created_at)).limit(10)).all()
+        events = [
+            {"kind": ev.kind, "message": ev.message, "created_at": ev.created_at}
+            for ev in s.scalars(select(Event).where(Event.created_at >= since).order_by(desc(Event.created_at))).all()
+        ]
+        approvals = [
+            {"id": a.id, "action": a.action, "requested_by": a.requested_by, "created_at": a.created_at}
+            for a in s.scalars(select(Approval).where(Approval.status == "pending").order_by(Approval.created_at.asc())).all()
+        ]
+        ideas = [
+            {"id": i.id, "title": i.title}
+            for i in s.scalars(select(Idea).where(Idea.created_at >= since).order_by(desc(Idea.created_at)).limit(10)).all()
+        ]
+        memos = [
+            {"id": m.id, "recommendation": m.recommendation}
+            for m in s.scalars(select(Memo).where(Memo.created_at >= since).order_by(desc(Memo.created_at)).limit(10)).all()
+        ]
+        ventures = [
+            {"id": v.id, "name": v.name, "slug": v.slug}
+            for v in s.scalars(select(Venture).where(Venture.created_at >= since).order_by(desc(Venture.created_at)).limit(10)).all()
+        ]
         llm_today = float(state.spend_today_usd if state else 0.0)
         llm_cap = float(state.daily_spend_cap_usd if state else 0.0)
         money_today = float(getattr(state, "money_spend_today_usd", 0.0) if state else 0.0)
@@ -33,11 +48,11 @@ def build_digest() -> dict:
 
     by_kind: dict[str, dict] = {}
     for ev in events:
-        slot = by_kind.setdefault(ev.kind, {"count": 0, "latest": ""})
+        slot = by_kind.setdefault(ev["kind"], {"count": 0, "latest": ""})
         slot["count"] += 1
         if not slot["latest"]:
-            slot["latest"] = ev.message
-    error_count = sum(1 for ev in events if ev.kind == "error")
+            slot["latest"] = ev["message"]
+    error_count = sum(1 for ev in events if ev["kind"] == "error")
     subject = f"NewSoft daily digest — {date.today().isoformat()}"
     lines = [
         subject,
@@ -56,15 +71,15 @@ def build_digest() -> dict:
         lines.append("- No events recorded.")
     lines += ["", f"Pending approvals ({len(approvals)}) — {_dashboard('/approvals')}"]
     for a in approvals[:10]:
-        age_h = max(0, int((datetime.now(timezone.utc) - a.created_at).total_seconds() // 3600))
-        lines.append(f"- #{a.id} {a.action} by {a.requested_by}, age {age_h}h")
+        age_h = max(0, int((datetime.now(timezone.utc) - a["created_at"]).total_seconds() // 3600))
+        lines.append(f"- #{a['id']} {a['action']} by {a['requested_by']}, age {age_h}h")
     lines += ["", "New ideas / memos / ventures"]
     for idea in ideas[:5]:
-        lines.append(f"- Idea #{idea.id}: {idea.title} ({_dashboard('/ideas')})")
+        lines.append(f"- Idea #{idea['id']}: {idea['title']} ({_dashboard('/ideas')})")
     for memo in memos[:5]:
-        lines.append(f"- Memo #{memo.id}: {memo.recommendation} ({_dashboard('/memos')})")
+        lines.append(f"- Memo #{memo['id']}: {memo['recommendation']} ({_dashboard('/memos')})")
     for venture in ventures[:5]:
-        lines.append(f"- Venture #{venture.id}: {venture.name} ({_dashboard('/ventures/' + venture.slug)})")
+        lines.append(f"- Venture #{venture['id']}: {venture['name']} ({_dashboard('/ventures/' + venture['slug'])})")
     lines += ["", f"Errors: {error_count}"]
     text_body = "\n".join(lines)
     html_body = "<pre>" + escape(text_body) + "</pre>"

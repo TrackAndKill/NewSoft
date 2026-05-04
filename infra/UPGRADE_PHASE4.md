@@ -67,6 +67,7 @@ Sync to live, preserving secrets and build/runtime dirs:
 rsync -a --delete \
   --exclude '.git' \
   --exclude '.env' \
+  --exclude '.ssh' \
   --exclude 'node_modules' \
   --exclude '.venv' \
   --exclude '.next' \
