@@ -17,6 +17,7 @@ MemoryMax=512M
 CPUQuota=80%
 NoNewPrivileges=true
 ProtectSystem=full
+ReadWritePaths=/etc/nginx/newsoft-sites /var/lib/newsoft/sites /var/lib/newsoft/well-known
 ProtectHome=true
 
 [Install]

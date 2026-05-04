@@ -139,6 +139,8 @@ Expected behavior:
 ## Restart and activate
 
 ```bash
+sudo install -m 644 /opt/newsoft/infra/systemd/newsoft-orchestrator.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart newsoft-orchestrator newsoft-dashboard
 curl -fsS -X POST http://127.0.0.1:8000/api/system \
   -H 'content-type: application/json' \
