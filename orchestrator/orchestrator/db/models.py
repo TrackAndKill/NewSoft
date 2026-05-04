@@ -196,3 +196,40 @@ class Event(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Site(Base):
+    __tablename__ = "sites"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int] = mapped_column(ForeignKey("ventures.id"), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    domain: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    deploy_dir: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(60), default="staging", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deployed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SiteContent(Base):
+    __tablename__ = "site_contents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int] = mapped_column(ForeignKey("ventures.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), default="landing_page", nullable=False)
+    html: Mapped[str] = mapped_column(Text, nullable=False)
+    meta_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Lead(Base):
+    __tablename__ = "leads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), default="landing", nullable=False)
+    ip_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_agent: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    referer: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

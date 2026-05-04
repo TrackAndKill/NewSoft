@@ -28,6 +28,15 @@ export default function VenturePage({ params }: { params: Promise<{ slug: string
         <span className="muted">{venture.slug}</span>
       </div>
 
+      {data.site && <div className="card" style={{ marginTop: 16 }}>
+        <h2 style={{ marginTop: 0 }}>Site</h2>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="pill">{data.site.status}</span>
+          <a href={`/sites/${data.site.slug}`}>Open site ops</a>
+          {data.site.domain && <a href={`https://${data.site.domain}`} target="_blank">{data.site.domain}</a>}
+        </div>
+      </div>}
+
       <div className="card" style={{ marginTop: 16 }}>
         <h2 style={{ marginTop: 0 }}>Charter</h2>
         <pre style={{ whiteSpace: "pre-wrap" }}>{venture.charter}</pre>

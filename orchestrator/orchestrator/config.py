@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     porkbun_api_secret: str = ""
 
     public_dashboard_url: str = "https://firm.profithub.me"
+    vm_ipv4: str = ""
+    certbot_email: str = ""
+    lead_ip_hash_pepper: str = "newsoft-static-fallback-pepper"
+    site_base_dir: str = "/var/lib/newsoft/sites"
+    site_well_known_dir: str = "/var/lib/newsoft/well-known"
+    nginx_site_dir: str = "/etc/nginx/newsoft-sites"
 
     model_opus: str = "claude-opus-4-7"
     model_sonnet: str = "claude-sonnet-4-6"

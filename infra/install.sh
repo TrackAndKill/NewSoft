@@ -22,7 +22,7 @@ echo "==> Installing system packages"
 apt-get update -y
 apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip postgresql-client \
-    curl ca-certificates gnupg
+    curl ca-certificates gnupg certbot nginx
 if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
@@ -45,12 +45,38 @@ if ! id -u "$BACKUP_USER" >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "/home/${BACKUP_USER}" --shell /usr/sbin/nologin "$BACKUP_USER"
 fi
 install -d -m 700 -o "$BACKUP_USER" -g "$BACKUP_USER" "$BACKUP_DIR"
+install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/newsoft/sites
+install -d -m 755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/newsoft/well-known
+install -d -m 755 -o "$SERVICE_USER" -g "$SERVICE_USER" /etc/nginx/newsoft-sites
+cat >/usr/local/sbin/newsoft-nginx-reload <<'SH'
+#!/bin/bash
+set -e
+/usr/sbin/nginx -t
+/bin/systemctl reload nginx
+SH
+cat >/usr/local/sbin/newsoft-issue-cert <<'SH'
+#!/bin/bash
+set -e
+domain="$1"
+case "$domain" in
+  *.*) ;;
+  *) echo "invalid domain"; exit 2;;
+esac
+/usr/bin/certbot certonly --webroot   -w /var/lib/newsoft/well-known   --non-interactive --agree-tos   -m "${CERTBOT_EMAIL:-founder@profithub.me}"   -d "$domain" -d "www.$domain"
+SH
+chmod 0755 /usr/local/sbin/newsoft-nginx-reload /usr/local/sbin/newsoft-issue-cert
+chown root:root /usr/local/sbin/newsoft-nginx-reload /usr/local/sbin/newsoft-issue-cert
+cat >/etc/sudoers.d/newsoft <<'SUDO'
+newsoft ALL=(root) NOPASSWD: /usr/local/sbin/newsoft-nginx-reload
+newsoft ALL=(root) NOPASSWD: /usr/local/sbin/newsoft-issue-cert *
+SUDO
+chmod 0440 /etc/sudoers.d/newsoft
 
 echo "==> Syncing code to ${INSTALL_DIR}"
 mkdir -p "$INSTALL_DIR"
 rsync -a --delete \
     --exclude '.git' --exclude 'node_modules' --exclude '.venv' \
-    --exclude '.next' --exclude '__pycache__' --exclude '.env' \
+    --exclude '.next' --exclude '__pycache__' --exclude '.env' --exclude '.ssh' \
     "${REPO_DIR}/" "${INSTALL_DIR}/"
 
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then

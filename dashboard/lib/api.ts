@@ -43,6 +43,9 @@ export const api = {
   ventures: () => req<any[]>("/api/ventures"),
   venture: (slug: string) => req<any>(`/api/ventures/${slug}`),
   venturePlan: (slug: string) => req<any>(`/api/ventures/${slug}/plan`),
+  sites: () => req<any[]>("/api/sites"),
+  site: (slug: string) => req<any>(`/api/sites/${slug}`),
+  siteLeads: (slug: string) => req<any[]>(`/api/sites/${slug}/leads`),
   kill: () => req<any>("/api/system/kill", { method: "POST" }),
   setSystem: (patch: Record<string, unknown>) =>
     req<any>("/api/system", {
