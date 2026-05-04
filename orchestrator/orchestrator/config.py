@@ -7,9 +7,24 @@ class Settings(BaseSettings):
     orchestrator_port: int = 8000
     dry_run: bool = True
     daily_spend_cap_usd: float = 5.00
+    money_daily_cap_usd: float = 50.00
     system_active: bool = True
     brave_api_key: str = ""
     brave_search_api_key: str = ""
+
+    resend_api_key: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    digest_to_email: str = ""
+    digest_from_email: str = ""
+
+    porkbun_api_key: str = ""
+    porkbun_api_secret: str = ""
+
+    public_dashboard_url: str = "https://firm.profithub.me"
 
     model_opus: str = "claude-opus-4-7"
     model_sonnet: str = "claude-sonnet-4-6"

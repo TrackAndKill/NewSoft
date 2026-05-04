@@ -9,6 +9,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => req<any>("/api/status"),
   costs: () => req<any>("/api/costs"),
+  moneyStatus: () => req<any>("/api/money/status"),
+  moneyTransactions: () => req<any[]>("/api/money/transactions"),
   goals: () => req<any[]>("/api/goals"),
   createGoal: (title: string, description: string) =>
     req<any>("/api/goals", {
@@ -31,10 +33,13 @@ export const api = {
   triggerDiscovery: () => req<any>("/api/discovery/run", { method: "POST" }),
   triggerBoard: () => req<any>("/api/board/run", { method: "POST" }),
   triggerValidator: () => req<any>("/api/validator/run", { method: "POST" }),
+  triggerVenture: () => req<any>("/api/venture/run", { method: "POST" }),
+  triggerDigest: () => req<any>("/api/digest/run", { method: "POST" }),
   boardReviews: (memoId?: number) =>
     req<any[]>(`/api/board/reviews${memoId ? `?memo_id=${memoId}` : ""}`),
   ventures: () => req<any[]>("/api/ventures"),
   venture: (slug: string) => req<any>(`/api/ventures/${slug}`),
+  venturePlan: (slug: string) => req<any>(`/api/ventures/${slug}/plan`),
   kill: () => req<any>("/api/system/kill", { method: "POST" }),
   setSystem: (patch: Record<string, unknown>) =>
     req<any>("/api/system", {

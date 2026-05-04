@@ -15,24 +15,32 @@ export default function ApprovalsPage() {
     <>
       <h1>Pending approvals</h1>
       {items.length === 0 && <div className="muted">Nothing to approve.</div>}
-      {items.map((a) => (
-        <div key={a.id} className="card">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <div>
-              <strong>{a.action}</strong>
-              <div className="muted">requested by {a.requested_by}</div>
+      {items.map((a) => {
+        const estimated = a.payload?.estimated_usd;
+        return (
+          <div key={a.id} className="card">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <strong>{a.action}</strong>
+                <div className="muted">requested by {a.requested_by}</div>
+                {estimated != null && (
+                  <div className="pill" style={{ marginTop: 8, color: "#ffd166" }}>
+                    Estimated real-money cost: ${Number(estimated).toFixed(2)}
+                  </div>
+                )}
+              </div>
+              <div className="row">
+                <button onClick={() => api.decide(a.id, true).then(load)}>Approve</button>
+                <button className="danger" onClick={() => api.decide(a.id, false).then(load)}>
+                  Reject
+                </button>
+              </div>
             </div>
-            <div className="row">
-              <button onClick={() => api.decide(a.id, true).then(load)}>Approve</button>
-              <button className="danger" onClick={() => api.decide(a.id, false).then(load)}>
-                Reject
-              </button>
-            </div>
+            {a.rationale && <div style={{ marginTop: 8 }}>{a.rationale}</div>}
+            <pre style={{ marginTop: 8, fontSize: 12 }}>{JSON.stringify(a.payload, null, 2)}</pre>
           </div>
-          {a.rationale && <div style={{ marginTop: 8 }}>{a.rationale}</div>}
-          <pre style={{ marginTop: 8, fontSize: 12 }}>{JSON.stringify(a.payload, null, 2)}</pre>
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }

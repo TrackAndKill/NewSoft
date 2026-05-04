@@ -10,7 +10,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <header style={{ padding: "16px 24px", borderBottom: "1px solid #222", display: "flex", gap: 24 }}>
+        <header style={{ padding: "16px 24px", borderBottom: "1px solid #222", display: "flex", gap: 24, flexWrap: "wrap" }}>
           <strong>NewSoft</strong>
           <a href="/">Overview</a>
           <a href="/goals">Goals</a>
@@ -19,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/board">Board</a>
           <a href="/ventures">Ventures</a>
           <a href="/approvals">Approvals</a>
+          <a href="/money">Money</a>
           <a href="/events">Activity</a>
         </header>
         <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>{children}</main>

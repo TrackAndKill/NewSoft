@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -19,12 +19,18 @@ from orchestrator.db.models import (
     Goal,
     Idea,
     Memo,
+    MoneyTransaction,
+    Plan,
     SystemState,
+    Task,
     ToolCall,
     Venture,
 )
 from orchestrator.db.session import session_scope
-from orchestrator.rituals.scheduler import board_tick, discovery_tick, start_scheduler, validator_tick
+from orchestrator.digest import send_digest
+from orchestrator.money import MAX_PER_ACTION_USD
+from orchestrator.rituals.scheduler import board_tick, discovery_tick, start_scheduler, validator_tick, venture_tick
+from orchestrator.tools.domains import execute_domain_registration
 
 
 @asynccontextmanager
@@ -34,7 +40,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="NewSoft Orchestrator", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="NewSoft Orchestrator", version="0.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -52,6 +58,7 @@ class SystemUpdate(BaseModel):
     active: bool | None = None
     dry_run: bool | None = None
     daily_spend_cap_usd: float | None = None
+    money_daily_cap_usd: float | None = None
 
 
 def _row_to_dict(row: Any) -> dict:
@@ -73,18 +80,10 @@ def status() -> dict:
 def costs() -> dict:
     today = datetime.now(timezone.utc).date()
     start = datetime.combine(today - timedelta(days=6), datetime.min.time(), tzinfo=timezone.utc)
-    buckets: dict[str, dict] = {
-        "today": _empty_cost_bucket(),
-        "yesterday": _empty_cost_bucket(),
-        "last_7d": _empty_cost_bucket(),
-    }
+    buckets: dict[str, dict] = {"today": _empty_cost_bucket(), "yesterday": _empty_cost_bucket(), "last_7d": _empty_cost_bucket()}
     day_bucket = func.date_trunc("day", AgentRun.started_at).label("day_bucket")
     with session_scope() as s:
-        rows = s.execute(
-            select(day_bucket, AgentRun.agent, func.sum(AgentRun.cost_usd))
-            .where(AgentRun.started_at >= start)
-            .group_by(day_bucket, AgentRun.agent)
-        ).all()
+        rows = s.execute(select(day_bucket, AgentRun.agent, func.sum(AgentRun.cost_usd)).where(AgentRun.started_at >= start).group_by(day_bucket, AgentRun.agent)).all()
     for day_dt, agent, total in rows:
         if day_dt is None:
             continue
@@ -92,14 +91,10 @@ def costs() -> dict:
         amount = float(total or 0)
         buckets["last_7d"]["total_usd"] += amount
         buckets["last_7d"]["by_agent"][agent] = buckets["last_7d"]["by_agent"].get(agent, 0.0) + amount
-        if day == today:
-            key = "today"
-        elif day == today - timedelta(days=1):
-            key = "yesterday"
-        else:
-            continue
-        buckets[key]["total_usd"] += amount
-        buckets[key]["by_agent"][agent] = buckets[key]["by_agent"].get(agent, 0.0) + amount
+        key = "today" if day == today else "yesterday" if day == today - timedelta(days=1) else None
+        if key:
+            buckets[key]["total_usd"] += amount
+            buckets[key]["by_agent"][agent] = buckets[key]["by_agent"].get(agent, 0.0) + amount
     for bucket in buckets.values():
         bucket["total_usd"] = round(bucket["total_usd"], 6)
         bucket["by_agent"] = {k: round(v, 6) for k, v in sorted(bucket["by_agent"].items())}
@@ -119,6 +114,8 @@ def update_system(payload: SystemUpdate) -> dict:
             state.dry_run = payload.dry_run
         if payload.daily_spend_cap_usd is not None:
             state.daily_spend_cap_usd = payload.daily_spend_cap_usd
+        if payload.money_daily_cap_usd is not None:
+            state.money_daily_cap_usd = payload.money_daily_cap_usd
         return _row_to_dict(state)
 
 
@@ -143,8 +140,7 @@ def list_goals() -> list[dict]:
 def create_goal(payload: GoalIn) -> dict:
     with session_scope() as s:
         g = Goal(title=payload.title, description=payload.description, status="active")
-        s.add(g)
-        s.flush()
+        s.add(g); s.flush()
         s.add(Event(kind="goal_created", actor="founder", message=f"Goal: {g.title}", payload={"goal_id": g.id}))
         return _row_to_dict(g)
 
@@ -164,6 +160,18 @@ def trigger_board(background: BackgroundTasks) -> dict:
 @app.post("/api/validator/run")
 def trigger_validator(background: BackgroundTasks) -> dict:
     background.add_task(validator_tick)
+    return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/venture/run")
+def trigger_venture(background: BackgroundTasks) -> dict:
+    background.add_task(venture_tick)
+    return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/digest/run")
+def trigger_digest(background: BackgroundTasks) -> dict:
+    background.add_task(send_digest)
     return {"queued": True, "ts": datetime.now(timezone.utc).isoformat()}
 
 
@@ -203,7 +211,15 @@ def get_venture(slug: str) -> dict:
         memo = s.get(Memo, v.memo_id)
         idea = s.get(Idea, v.idea_id)
         reviews = s.scalars(select(BoardReview).where(BoardReview.memo_id == v.memo_id).order_by(BoardReview.created_at.asc())).all()
-        return {"venture": _row_to_dict(v), "memo": _row_to_dict(memo) if memo else None, "idea": _row_to_dict(idea) if idea else None, "reviews": [_row_to_dict(r) for r in reviews]}
+        plan = s.scalars(select(Plan).where(Plan.venture_id == v.id).order_by(desc(Plan.created_at))).first()
+        tasks = s.scalars(select(Task).where(Task.venture_id == v.id).order_by(Task.created_at.asc())).all()
+        return {"venture": _row_to_dict(v), "memo": _row_to_dict(memo) if memo else None, "idea": _row_to_dict(idea) if idea else None, "reviews": [_row_to_dict(r) for r in reviews], "plan": _row_to_dict(plan) if plan else None, "tasks": [_row_to_dict(t) for t in tasks]}
+
+
+@app.get("/api/ventures/{slug}/plan")
+def get_venture_plan(slug: str) -> dict:
+    data = get_venture(slug)
+    return {"venture": data["venture"], "plan": data.get("plan"), "tasks": data.get("tasks", [])}
 
 
 @app.get("/api/events")
@@ -242,16 +258,35 @@ def list_approvals(status: str = "pending") -> list[dict]:
 @app.post("/api/approvals/{approval_id}")
 def decide_approval(approval_id: int, payload: ApprovalDecision, background: BackgroundTasks) -> dict:
     should_run_experiment = False
+    should_register_domain = False
     with session_scope() as s:
         a = s.get(Approval, approval_id)
         if a is None:
             raise HTTPException(404, "approval not found")
+        if a.status in {"approved", "rejected"} and not (payload.approve and a.action == "register_domain"):
+            return _row_to_dict(a)
         a.status = "approved" if payload.approve else "rejected"
         a.decided_by = payload.decided_by
         a.decided_at = datetime.now(timezone.utc)
         should_run_experiment = a.status == "approved" and a.action == "run_experiment"
+        should_register_domain = a.status == "approved" and a.action == "register_domain"
         s.add(Event(kind="approval_decided", actor=payload.decided_by, message=f"Approval #{a.id} {a.status}: {a.action}", payload={"approval_id": a.id}))
         data = _row_to_dict(a)
     if should_run_experiment:
         background.add_task(run_experiment, approval_id)
+    if should_register_domain:
+        background.add_task(execute_domain_registration, approval_id)
     return data
+
+
+@app.get("/api/money/status")
+def money_status() -> dict:
+    with session_scope() as s:
+        state = s.get(SystemState, 1)
+        return {"spend_today_usd": float(getattr(state, "money_spend_today_usd", 0.0) if state else 0.0), "daily_cap_usd": float(getattr(state, "money_daily_cap_usd", 50.0) if state else 50.0), "per_action_cap_usd": MAX_PER_ACTION_USD, "dry_run": bool(state.dry_run if state else True)}
+
+
+@app.get("/api/money/transactions")
+def money_transactions(limit: int = 50) -> list[dict]:
+    with session_scope() as s:
+        return [_row_to_dict(r) for r in s.scalars(select(MoneyTransaction).order_by(desc(MoneyTransaction.created_at)).limit(limit)).all()]

@@ -22,6 +22,9 @@ class SystemState(Base):
     daily_spend_cap_usd: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
     spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     spend_day: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    money_spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    money_daily_cap_usd: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
+    money_spend_day: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -138,6 +141,49 @@ class Experiment(Base):
     status: Mapped[str] = mapped_column(String(40), default="designed", nullable=False)
     result_md: Mapped[str] = mapped_column(Text, default="")
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MoneyTransaction(Base):
+    __tablename__ = "money_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(120), nullable=False)
+    amount_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    vendor: Mapped[str] = mapped_column(String(80), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(240), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    approval_id: Mapped[int | None] = mapped_column(ForeignKey("approvals.id"), nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Plan(Base):
+    __tablename__ = "plans"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int] = mapped_column(ForeignKey("ventures.id"), nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, default="")
+    plan_30: Mapped[str] = mapped_column(Text, default="")
+    plan_60: Mapped[str] = mapped_column(Text, default="")
+    plan_90: Mapped[str] = mapped_column(Text, default="")
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int] = mapped_column(ForeignKey("ventures.id"), nullable=False)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    needs_approval: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    approval_id: Mapped[int | None] = mapped_column(ForeignKey("approvals.id"), nullable=True)
+    approval_action: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    approval_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
