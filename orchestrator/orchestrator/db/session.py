@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from orchestrator.config import settings
 
 engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
 
 @contextmanager
