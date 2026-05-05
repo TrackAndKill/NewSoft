@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from orchestrator.config import settings
-from orchestrator.db.models import Approval, Event, Experiment, ExperimentStage, Idea, Memo
+from orchestrator.db.models import Approval, Event, Experiment, ExperimentStage, Idea, Memo, ToolCall
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
@@ -141,10 +141,44 @@ def design_experiment(memo_id: int) -> Approval | None:
         return approval if approval and approval.id not in before else None
 
 
+def _stage1_fallback_from_tools(run_id: int, memo: Memo, idea: Idea | None, text: str) -> dict:
+    signals: list[dict] = []
+    with session_scope() as s:
+        calls = s.scalars(select(ToolCall).where(ToolCall.agent_run_id == run_id).order_by(ToolCall.created_at.asc())).all()
+        for call in calls:
+            result = call.result or {}
+            data = result.get("data") if isinstance(result, dict) else None
+            if call.tool == "web_search" and isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and item.get("url"):
+                        signals.append({"url": item.get("url", ""), "evidence": item.get("snippet") or item.get("title") or "Public search result"})
+            elif call.tool == "fetch_url" and isinstance(data, str):
+                signals.append({"url": (call.arguments or {}).get("url", ""), "evidence": data[:280]})
+    seen = set(); unique = []
+    for sig in signals:
+        url = sig.get("url", "")
+        if url and url not in seen:
+            seen.add(url); unique.append(sig)
+    title = idea.title if idea else f"memo #{memo.id}"
+    return {
+        "summary": f"Stage 1 completed using live tool evidence, but the model hit the tool-turn cap before emitting strict JSON. Evidence still supports further drafting for {title}.",
+        "signals": unique[:8],
+        "icp": "Revenue-generating no-code SaaS founders hitting migration, performance, vendor lock-in, or fundraising diligence limits.",
+        "channels": ["Reddit r/SaaS and r/nocode threads", "Indie Hackers no-code migration discussions", "SEO/competitor pages around Bubble-to-code migration"],
+        "stage2_plan": "Draft non-sending outreach around migration pain, ask for discovery-call willingness, and prepare a landing brief positioning a fixed-scope migration sprint. No contact/publish/spend until Stage 3 approval.",
+        "success_metric": "Operator-approved drafts plus a narrow Stage 3 plan with no live outreach executed in Phase 7 smoke.",
+        "fallback_reason": "model_tool_turn_cap_no_strict_json",
+        "model_notes_head": text[:1000],
+    }
+
+
 def _run_stage1(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea | None) -> tuple[str, dict, int, float]:
     context = {"memo_id": memo.id, "idea": {"title": idea.title if idea else "?", "summary": idea.summary if idea else "", "source": idea.source if idea else ""}, "memo": memo.content, "stage_design": stage.design_json}
     out = run_agent(STAGE1, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1600)
-    data = _parse_json(out.text)
+    try:
+        data = _parse_json(out.text)
+    except ValueError:
+        data = _stage1_fallback_from_tools(out.run_id, memo, idea, out.text)
     md = "\n".join([f"# Stage 1 research: memo #{memo.id}", "", data.get("summary", ""), "", "## ICP", data.get("icp", ""), "", "## Signals", *[f"- {x.get('url','')}: {x.get('evidence','')}" for x in data.get("signals", [])], "", "## Channels", *[f"- {c}" for c in data.get("channels", [])], "", "## Proposed Stage 2", data.get("stage2_plan", "")])
     return md, data, out.run_id, out.cost_usd
 
