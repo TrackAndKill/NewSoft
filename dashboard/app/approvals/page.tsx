@@ -8,6 +8,9 @@ const SIDE_EFFECTFUL = new Set([
   "configure_dns",
   "deploy_landing_page",
   "run_experiment",
+  "run_experiment_stage_research",
+  "run_experiment_stage_outreach_draft",
+  "run_experiment_stage_validation",
   "kill_venture",
   "teardown_site",
 ]);

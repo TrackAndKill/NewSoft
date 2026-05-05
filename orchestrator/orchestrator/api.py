@@ -10,17 +10,17 @@ from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
 from orchestrator.agents.discovery import run_discovery
-from orchestrator.agents.validator import run_experiment
+from orchestrator.agents.validator import run_experiment, run_experiment_stage
 from orchestrator.db.init_db import init_db
 from orchestrator.db.models import (
-    AgentRun, Approval, BoardReview, Event, Experiment, Goal, Idea, Lead, Memo,
-    MoneyTransaction, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
+    AgentRun, Approval, BoardReview, Event, Experiment, ExperimentStage, Goal, Idea, Lead, Memo,
+    MemoryEmbedding, MoneyTransaction, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
 )
 from orchestrator.db.session import session_scope
 from orchestrator.digest import send_digest
 from orchestrator.money import MAX_PER_ACTION_USD
 from orchestrator.config import settings
-from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, site_tick, start_scheduler, validator_tick, venture_tick
+from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, memory_reindex_tick, site_tick, start_scheduler, validator_tick, venture_tick
 from orchestrator.tools.domains import execute_domain_registration
 from orchestrator.tools.sites import execute_site_approval
 from orchestrator.agents.postmortem_writer import write_postmortem
@@ -50,6 +50,10 @@ class SystemUpdate(BaseModel):
 class SignupIn(BaseModel):
     email: str
     source: str = "landing"
+class MemorySearchIn(BaseModel):
+    query: str
+    kinds: list[str] | None = None
+    limit: int = 10
 
 def _row_to_dict(row: Any) -> dict:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
@@ -248,14 +252,41 @@ def list_experiments(limit: int = 100, memo_id: int | None = None) -> list[dict]
     with session_scope() as s:
         q = select(Experiment).order_by(desc(Experiment.created_at)).limit(limit)
         if memo_id is not None: q = select(Experiment).where(Experiment.memo_id == memo_id).order_by(desc(Experiment.created_at))
-        return [_row_to_dict(r) for r in s.scalars(q).all()]
+        rows = []
+        for exp in s.scalars(q).all():
+            data = _row_to_dict(exp)
+            stages = s.scalars(select(ExperimentStage).where(ExperimentStage.experiment_id == exp.id).order_by(ExperimentStage.stage_index.asc())).all()
+            data["stages"] = [_row_to_dict(st) for st in stages]
+            rows.append(data)
+        return rows
+@app.get("/api/experiments/{experiment_id}")
+def get_experiment(experiment_id: int) -> dict:
+    with session_scope() as s:
+        exp = s.get(Experiment, experiment_id)
+        if exp is None: raise HTTPException(404, "experiment not found")
+        memo = s.get(Memo, exp.memo_id)
+        stages = s.scalars(select(ExperimentStage).where(ExperimentStage.experiment_id == exp.id).order_by(ExperimentStage.stage_index.asc())).all()
+        return {"experiment": _row_to_dict(exp), "memo": _row_to_dict(memo) if memo else None, "stages": [_row_to_dict(st) for st in stages]}
+@app.get("/api/memory/status")
+def memory_status() -> dict:
+    from orchestrator.memory import embeddings_available
+    with session_scope() as s:
+        counts = s.execute(select(MemoryEmbedding.source_kind, func.count(MemoryEmbedding.id)).group_by(MemoryEmbedding.source_kind)).all()
+        return {"provider": settings.memory_provider or "voyage", "embeddings_available": embeddings_available(), "counts": {k: int(v) for k, v in counts}}
+@app.post("/api/memory/reindex")
+def trigger_memory_reindex() -> dict:
+    return memory_reindex_tick()
+@app.post("/api/memory/search")
+def search_memory_api(payload: MemorySearchIn) -> list[dict]:
+    from orchestrator.memory import search_memory
+    return search_memory(payload.query, kinds=payload.kinds, limit=payload.limit)
 @app.get("/api/approvals")
 def list_approvals(status: str = "pending") -> list[dict]:
     with session_scope() as s: return [_row_to_dict(r) for r in s.scalars(select(Approval).where(Approval.status == status).order_by(desc(Approval.created_at))).all()]
 
 @app.post("/api/approvals/{approval_id}")
 def decide_approval(approval_id: int, payload: ApprovalDecision, background: BackgroundTasks) -> dict:
-    should_run_experiment = should_register_domain = should_site_action = should_kill_venture = False
+    should_run_experiment = should_run_stage = should_register_domain = should_site_action = should_kill_venture = False
     force_live = payload.execute_live if payload.approve else None
     with session_scope() as s:
         a = s.get(Approval, approval_id)
@@ -267,13 +298,15 @@ def decide_approval(approval_id: int, payload: ApprovalDecision, background: Bac
         a.decided_by = payload.decided_by
         a.decided_at = datetime.now(timezone.utc)
         should_run_experiment = a.status == "approved" and a.action == "run_experiment"
+        should_run_stage = a.status == "approved" and a.action in {"run_experiment_stage_research", "run_experiment_stage_outreach_draft", "run_experiment_stage_validation"}
         should_register_domain = a.status == "approved" and a.action == "register_domain"
         should_site_action = a.status == "approved" and a.action in {"configure_dns", "deploy_landing_page", "teardown_site"}
         should_kill_venture = a.status == "approved" and a.action == "kill_venture"
         execute_mode = "live" if force_live is True else "simulated" if force_live is False else "system"
         s.add(Event(kind="approval_decided", actor=payload.decided_by, message=f"Approval #{a.id} {a.status}: {a.action}", payload={"approval_id": a.id, "execute_mode": execute_mode}))
         data = _row_to_dict(a)
-    if should_run_experiment: background.add_task(run_experiment, approval_id)
+    if should_run_experiment: background.add_task(run_experiment, approval_id, force_live)
+    if should_run_stage: background.add_task(run_experiment_stage, approval_id, force_live)
     if should_register_domain: background.add_task(execute_domain_registration, approval_id, force_live)
     if should_site_action: background.add_task(execute_site_approval, approval_id, force_live)
     if should_kill_venture: background.add_task(execute_kill_venture_approval, approval_id)

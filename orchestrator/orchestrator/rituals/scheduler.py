@@ -6,10 +6,10 @@ from sqlalchemy import select
 from orchestrator.agents.board import review_memo
 from orchestrator.agents.ceo import charter_venture
 from orchestrator.agents.discovery import run_discovery
-from orchestrator.agents.validator import design_experiment
+from orchestrator.agents.validator import design_experiment, file_next_stage_approvals, run_experiment_stage
 from orchestrator.budget import SystemHalted, check_active
 from orchestrator.config import settings
-from orchestrator.db.models import Approval, Event, Experiment, Goal, Memo, Plan, Site, SiteContent, Venture
+from orchestrator.db.models import Approval, Event, Experiment, ExperimentStage, Goal, Memo, Plan, Site, SiteContent, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.digest import send_digest
 
@@ -64,12 +64,15 @@ def validator_tick() -> None:
         with session_scope() as s:
             check_active(s)
             explore = s.scalars(select(Memo).where(Memo.decision == "explore").order_by(Memo.created_at.asc())).all()
-            memo_ids = []
-            for memo in explore:
-                has_experiment = s.scalars(select(Experiment).where(Experiment.memo_id == memo.id)).first() is not None
-                pending_approvals = s.scalars(select(Approval).where(Approval.action == "run_experiment", Approval.status == "pending")).all()
-                has_approval = any((a.payload or {}).get("memo_id") == memo.id for a in pending_approvals)
-                if not has_experiment and not has_approval: memo_ids.append(memo.id)
+            memo_ids = [m.id for m in explore]
+            runnable_approval_ids = [
+                a.id for a in s.scalars(
+                    select(Approval).where(
+                        Approval.status == "approved",
+                        Approval.action.in_(["run_experiment_stage_research", "run_experiment_stage_outreach_draft", "run_experiment"]),
+                    )
+                ).all()
+            ]
     except SystemHalted:
         log.info("System halted; skipping validator tick."); return
     for memo_id in memo_ids:
@@ -77,6 +80,16 @@ def validator_tick() -> None:
         except Exception as e:
             log.exception("design_experiment(%s) failed", memo_id)
             with session_scope() as s: s.add(Event(kind="error", actor="validator", message=f"Validator design failed for memo {memo_id}: {e}"))
+    try:
+        file_next_stage_approvals()
+    except Exception as e:
+        log.exception("file_next_stage_approvals failed")
+        with session_scope() as s: s.add(Event(kind="error", actor="validator", message=f"Stage approval filing failed: {e}"))
+    for approval_id in runnable_approval_ids:
+        try: run_experiment_stage(approval_id)
+        except Exception as e:
+            log.exception("run_experiment_stage(%s) failed", approval_id)
+            with session_scope() as s: s.add(Event(kind="error", actor="validator", message=f"Experiment stage run failed for approval {approval_id}: {e}"))
 
 
 def venture_tick() -> None:
@@ -208,6 +221,16 @@ def kill_loop_tick() -> dict:
             s.add(Event(kind="no_kill_candidates", actor="kill_evaluator", message=f"Kill loop evaluated {evaluated} venture(s); no approvals filed.", payload={"evaluated": evaluated}))
     return {"evaluated": evaluated, "created_approvals": created}
 
+def memory_reindex_tick() -> dict:
+    from orchestrator.memory import memory_reindex_tick as run_memory_reindex_tick
+    try:
+        return run_memory_reindex_tick()
+    except Exception as e:
+        log.exception("memory_reindex_tick failed")
+        with session_scope() as s: s.add(Event(kind="error", actor="memory", message=f"Memory reindex failed: {e}"))
+        return {"indexed": 0, "errors": 1, "available": False}
+
+
 def start_scheduler() -> None:
     scheduler.add_job(discovery_tick, "interval", hours=4, id="discovery_tick", replace_existing=True)
     scheduler.add_job(board_tick, "interval", minutes=15, id="board_tick", replace_existing=True)
@@ -216,5 +239,6 @@ def start_scheduler() -> None:
     scheduler.add_job(site_tick, "interval", minutes=5, id="site_tick", replace_existing=True)
     scheduler.add_job(digest_tick, "cron", hour=8, minute=0, id="digest_tick", replace_existing=True)
     scheduler.add_job(kill_loop_tick, "cron", day_of_week="sun", hour=9, minute=0, id="kill_loop_tick", replace_existing=True)
+    scheduler.add_job(memory_reindex_tick, "cron", hour=4, minute=0, id="memory_reindex_tick", replace_existing=True)
     if not scheduler.running: scheduler.start()
     log.info("Scheduler started.")

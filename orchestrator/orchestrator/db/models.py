@@ -135,7 +135,7 @@ class Approval(Base):
 
 
 class Experiment(Base):
-    """Validator-designed experiment for an EXPLORE memo."""
+    """Validator-designed experiment parent/container for staged validation."""
 
     __tablename__ = "experiments"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -143,10 +143,53 @@ class Experiment(Base):
     approval_id: Mapped[int | None] = mapped_column(ForeignKey("approvals.id"), nullable=True)
     design_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="designed", nullable=False)
+    current_stage: Mapped[str | None] = mapped_column(String(40), nullable=True)
     result_md: Mapped[str] = mapped_column(Text, default="")
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ExperimentStage(Base):
+    __tablename__ = "experiment_stages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id"), nullable=False)
+    stage_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    stage_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="designed", nullable=False)
+    design_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_md: Mapped[str] = mapped_column(Text, default="")
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    approval_id: Mapped[int | None] = mapped_column(ForeignKey("approvals.id"), nullable=True)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    real_money_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OutreachSend(Base):
+    __tablename__ = "outreach_sends"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id"), nullable=False)
+    recipient_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)
+    provider_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MemoryEmbedding(Base):
+    __tablename__ = "memory_embeddings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_chunk: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MoneyTransaction(Base):

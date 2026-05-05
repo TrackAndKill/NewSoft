@@ -26,6 +26,14 @@ export const api = {
   events: () => req<any[]>("/api/events"),
   agentRun: (id: number | string) => req<any>(`/api/agent_runs/${id}`),
   experiments: () => req<any[]>("/api/experiments"),
+  experiment: (id: number | string) => req<any>(`/api/experiments/${id}`),
+  memoryStatus: () => req<any>("/api/memory/status"),
+  memorySearch: (query: string, kinds?: string[], limit = 10) =>
+    req<any[]>("/api/memory/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, kinds, limit }),
+    }),
   approvals: (status = "pending") => req<any[]>(`/api/approvals?status=${status}`),
   decide: (id: number, approve: boolean, execute_live?: boolean | null) =>
     req<any>(`/api/approvals/${id}`, {
