@@ -69,9 +69,10 @@ def validator_tick() -> None:
                 a.id for a in s.scalars(
                     select(Approval).where(
                         Approval.status == "approved",
-                        Approval.action.in_(["run_experiment_stage_research", "run_experiment_stage_outreach_draft", "run_experiment"]),
+                        Approval.action.in_(["run_experiment_stage_research", "run_experiment_stage_outreach_draft"]),
                     )
                 ).all()
+                if (a.payload or {}).get("stage_id")
             ]
     except SystemHalted:
         log.info("System halted; skipping validator tick."); return
