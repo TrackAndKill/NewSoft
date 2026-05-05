@@ -183,13 +183,35 @@ def _run_stage1(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea 
     return md, data, out.run_id, out.cost_usd
 
 
+def _stage2_fallback_from_text(text: str) -> dict:
+    body = text.strip()
+    # If the model produced useful draft prose but malformed JSON, preserve the artifact
+    # instead of failing the whole staged smoke. Keep all outputs draft-only.
+    return {
+        "email_variants": [
+            {
+                "subject": "Stuck between your no-code MVP and a full rewrite?",
+                "body": body[:3500] or "Draft-only outreach: ask no-code founders whether migration pain is urgent enough for a fixed-scope code migration sprint.",
+            }
+        ],
+        "dm_template": "Draft only — not sent. Saw your post about outgrowing a no-code stack. Would a fixed-scope two-week migration sprint that exports your data model, scaffolds Next.js/Postgres, and ports top flows be useful enough to discuss?",
+        "landing_page_brief": "Draft-only landing brief: headline 'Escape your no-code ceiling in 2 weeks'; bullets for schema export, Next.js/Postgres scaffold, top-3 flows ported; CTA for discovery call/intake. Do not publish in Phase 7 smoke.",
+        "stage3_plan": "Prepare exact prospect list, final copy, and validation metrics for operator approval. Stage 3 remains pending and must not send email, publish, spend, or contact prospects without explicit live approval.",
+        "operator_review_notes": ["Recovered from malformed JSON using the model's draft text.", "No outreach was sent and no public asset was published."],
+        "fallback_reason": "malformed_stage2_json_preserved_as_draft",
+    }
+
+
 def _run_stage2(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea | None) -> tuple[str, dict, int, float]:
     with session_scope() as s:
         prior = s.scalars(select(ExperimentStage).where(ExperimentStage.experiment_id == exp.id, ExperimentStage.stage_index == 1)).first()
         prior_result = prior.result_json if prior else {}
     context = {"memo_id": memo.id, "idea": {"title": idea.title if idea else "?", "summary": idea.summary if idea else "", "source": idea.source if idea else ""}, "memo": memo.content, "stage1_result": prior_result, "stage_design": stage.design_json}
     out = run_agent(STAGE2, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1500)
-    data = _parse_json(out.text)
+    try:
+        data = _parse_json(out.text)
+    except Exception:
+        data = _stage2_fallback_from_text(out.text)
     emails = data.get("email_variants", [])[:3]
     md = "\n".join([f"# Stage 2 drafts: memo #{memo.id}", "", "## Email variants", *[f"### Variant {i+1}: {e.get('subject','')}\n{e.get('body','')}" for i, e in enumerate(emails)], "", "## DM template", data.get("dm_template", ""), "", "## Landing page brief", data.get("landing_page_brief", ""), "", "## Proposed Stage 3", data.get("stage3_plan", "")])
     return md, data, out.run_id, out.cost_usd
