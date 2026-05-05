@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     brave_api_key: str = ""
     brave_search_api_key: str = ""
 
+    voyage_api_key: str = ""
+    memory_provider: str = "voyage"
+    openai_api_key: str = ""
+
     resend_api_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587

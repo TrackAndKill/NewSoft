@@ -13,6 +13,7 @@ from orchestrator.config import settings
 from orchestrator.db.models import AgentRun, Event, Idea, Memo, Plan, Postmortem, Site, Task, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
+from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
 
 WRITER = AgentSpec(
     name="postmortem_writer",
@@ -21,7 +22,7 @@ WRITER = AgentSpec(
     max_tokens=1800,
     system_prompt=(
         "You are the postmortem writer for an autonomous venture firm. "
-        "Write a useful, honest postmortem from the available operating record. "
+        "Call search_memory once for similar past postmortems or lessons; if empty, continue. Write a useful, honest postmortem from the available operating record. "
         "Return STRICT JSON only: {\"content_md\":\"# ...\",\"lessons_md\":\"- ...\"}. "
         "Do not invent metrics; label unknowns clearly."
     ),

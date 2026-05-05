@@ -7,6 +7,7 @@ from orchestrator.config import settings
 from orchestrator.db.models import Event, Idea, Memo, Plan, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
+from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
 
 CTO = AgentSpec(
     name="cto",
@@ -15,7 +16,7 @@ CTO = AgentSpec(
     max_tokens=1600,
     system_prompt=(
         "You are NewSoft's CTO. For a newly chartered venture, produce a practical 30/60/90-day build plan. "
-        "Prefer fast validation, tiny technical scope, and approval-gated external actions. "
+        "Call search_memory once for related technical/validation lessons; if empty, continue. Prefer fast validation, tiny technical scope, and approval-gated external actions. "
         'Return STRICT JSON: {"summary":"...","plan_30":"...","plan_60":"...","plan_90":"..."}.'
     ),
 )

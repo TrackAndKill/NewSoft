@@ -8,6 +8,7 @@ from orchestrator.config import settings
 from orchestrator.db.models import Event, Idea, Memo, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
+from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
 
 CEO = AgentSpec(
     name="ceo",
@@ -20,7 +21,7 @@ CEO = AgentSpec(
         '{"name":"venture name","slug":"kebab-case-slug","mission":"...",'
         '"okrs":["O1: ...","KR1: ...",...],"kill_criteria":["..."],'
         '"first_90_days":"..."}. '
-        "The slug must be 3-30 lowercase chars, kebab-case, no leading digit. "
+        "Call search_memory once for related lessons before writing the charter; if empty, continue. The slug must be 3-30 lowercase chars, kebab-case, no leading digit. "
         "OKRs: 1 objective with 3 measurable KRs. Kill criteria: 2-3 specific, "
         "time-bound conditions under which the venture should be shut down. "
         "No prose outside the JSON."
