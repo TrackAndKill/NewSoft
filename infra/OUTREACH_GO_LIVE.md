@@ -141,3 +141,18 @@ If needed, stop the orchestrator service:
 ```bash
 sudo systemctl stop newsoft-orchestrator
 ```
+
+## 9. Porkbun FRAUD_BLOCK during domain shakedowns
+
+Porkbun can return a fraud block on first registrations from a new account, new IP, or new API key. The symptom during a domain registration approval is HTTP 400 with:
+
+```json
+{"status":"ERROR","code":"FRAUD_BLOCK","message":"Unable to process order at this time. (002)"}
+```
+
+Resolution path:
+
+- Complete account verification in the Porkbun web UI.
+- If the account remains blocked, contact `support@porkbun.com` and reference the blocked order and code `002`.
+- Rotate Porkbun API keys after support unblocks the account, because the original keys are now associated with a flagged order.
+- Before the next agent-driven registration, pre-warm Porkbun by buying one domain manually in the web UI so the account's first programmatic order is not also its first order ever.

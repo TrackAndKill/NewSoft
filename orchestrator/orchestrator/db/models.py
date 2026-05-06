@@ -87,7 +87,7 @@ class Venture(Base):
     killed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     kill_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     daily_llm_cap_usd: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
-    daily_money_cap_usd: Mapped[float] = mapped_column(Float, default=10.0, nullable=False)
+    daily_money_cap_usd: Mapped[float] = mapped_column(Float, default=25.0, nullable=False)
     total_money_cap_usd: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
     llm_spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     money_spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)

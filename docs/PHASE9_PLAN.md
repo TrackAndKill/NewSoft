@@ -67,7 +67,7 @@ venture cannot starve the others.
 #### Data model
 Add columns to `ventures` (idempotent migration):
 - `daily_llm_cap_usd FLOAT NOT NULL DEFAULT 5.0`
-- `daily_money_cap_usd FLOAT NOT NULL DEFAULT 10.0`
+- `daily_money_cap_usd FLOAT NOT NULL DEFAULT 25.0`
 - `total_money_cap_usd FLOAT NOT NULL DEFAULT 50.0`
 - `llm_spend_today_usd FLOAT NOT NULL DEFAULT 0.0`
 - `money_spend_today_usd FLOAT NOT NULL DEFAULT 0.0`

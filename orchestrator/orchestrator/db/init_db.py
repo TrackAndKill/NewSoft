@@ -25,7 +25,7 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("outreach_sends", "complained_at", "TIMESTAMP WITH TIME ZONE"),
     ("outreach_sends", "cancelled", "BOOLEAN NOT NULL DEFAULT false"),
     ("ventures", "daily_llm_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 5.0"),
-    ("ventures", "daily_money_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 10.0"),
+    ("ventures", "daily_money_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 25.0"),
     ("ventures", "total_money_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 50.0"),
     ("ventures", "llm_spend_today_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
     ("ventures", "money_spend_today_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
@@ -50,6 +50,13 @@ def _run_column_migrations() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_money_transactions_venture_id ON money_transactions (venture_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_clarifications_status ON clarifications (status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_clarifications_venture_id ON clarifications (venture_id)"))
+        conn.execute(text("ALTER TABLE ventures ALTER COLUMN daily_money_cap_usd SET DEFAULT 25.0"))
+        conn.execute(text("""
+            UPDATE ventures
+               SET daily_money_cap_usd = 25.0
+             WHERE daily_money_cap_usd = 10.0
+               AND money_spend_lifetime_usd = 0.0
+        """))
 
 
 def _run_vector_migrations() -> None:
