@@ -126,6 +126,27 @@ def _transaction_dict(tx: MoneyTransaction) -> dict:
     return {c.name: getattr(tx, c.name) for c in tx.__table__.columns}
 
 
+def _venture_id_from_payload(s, payload: dict[str, Any]) -> int | None:
+    venture_id = payload.get("venture_id")
+    if venture_id is not None:
+        try:
+            return int(venture_id)
+        except (TypeError, ValueError):
+            return None
+    site_id = payload.get("site_id")
+    if site_id is not None:
+        try:
+            site = s.get(Site, int(site_id))
+            return site.venture_id if site else None
+        except (TypeError, ValueError):
+            return None
+    domain = str(payload.get("name") or payload.get("domain") or "").strip().lower()
+    if domain:
+        site = s.scalars(select(Site).where(Site.domain == domain)).first()
+        return site.venture_id if site else None
+    return None
+
+
 def _resolve_dry_run(state: SystemState | None, force_live: bool | None = None) -> bool:
     if force_live is True:
         return False
