@@ -24,6 +24,15 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("outreach_sends", "bounced_at", "TIMESTAMP WITH TIME ZONE"),
     ("outreach_sends", "complained_at", "TIMESTAMP WITH TIME ZONE"),
     ("outreach_sends", "cancelled", "BOOLEAN NOT NULL DEFAULT false"),
+    ("ventures", "daily_llm_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 5.0"),
+    ("ventures", "daily_money_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 10.0"),
+    ("ventures", "total_money_cap_usd", "DOUBLE PRECISION NOT NULL DEFAULT 50.0"),
+    ("ventures", "llm_spend_today_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
+    ("ventures", "money_spend_today_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
+    ("ventures", "money_spend_lifetime_usd", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
+    ("ventures", "spend_day", "TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()"),
+    ("agent_runs", "venture_id", "INTEGER REFERENCES ventures(id)"),
+    ("money_transactions", "venture_id", "INTEGER REFERENCES ventures(id)"),
 ]
 
 
@@ -37,6 +46,10 @@ def _run_column_migrations() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_suppressions_domain ON email_suppressions (recipient_domain)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_domain_blocks_domain ON email_domain_blocks (domain)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_sends_experiment_domain ON outreach_sends (experiment_id, recipient_domain)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_venture_id ON agent_runs (venture_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_money_transactions_venture_id ON money_transactions (venture_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_clarifications_status ON clarifications (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_clarifications_venture_id ON clarifications (venture_id)"))
 
 
 def _run_vector_migrations() -> None:

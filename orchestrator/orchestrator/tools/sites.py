@@ -13,7 +13,7 @@ from sqlalchemy import desc, select
 from orchestrator.config import settings
 from orchestrator.db.models import Approval, Event, Site, SiteContent, SystemState, Task, Venture
 from orchestrator.db.session import session_scope
-from orchestrator.tools.domains import ToolUnavailable, add_dns_record, list_dns_records
+from orchestrator.tools.domains import ToolUnavailable, add_dns_record, delete_dns_record, list_dns_records
 
 DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,251}\.[a-z]{2,}$", re.I)
 
@@ -201,15 +201,45 @@ def teardown_site(site_id: int, force_live: bool | None = None) -> dict:
         site = s.get(Site, site_id)
         if site is None:
             raise ValueError(f"Site {site_id} not found")
+        venture = s.get(Venture, site.venture_id)
+        if venture is None or venture.status != "killed":
+            raise ValueError("site teardown requires venture status='killed'")
         conf_path = Path(settings.nginx_site_dir) / f"{site.slug}.conf"
-        if conf_path.exists():
-            conf_path.unlink()
-        if not _dry_run(s, force_live):
+        deploy_dir = Path(site.deploy_dir)
+        dry_run = _dry_run(s, force_live)
+        removed_conf = False
+        archived_to = None
+        dns_deleted = 0
+        dns_error = None
+        if not dry_run:
+            if site.domain:
+                try:
+                    records = list_dns_records(site.domain)
+                    for record in records:
+                        name = str(record.get("name") or "").rstrip(".").lower()
+                        typ = str(record.get("type") or "").upper()
+                        rid = record.get("id")
+                        wanted_names = {"@", site.domain.lower(), f"www.{site.domain.lower()}", "www"}
+                        if rid and typ in {"A", "AAAA", "CNAME"} and name in wanted_names:
+                            delete_dns_record(site.domain, str(rid))
+                            dns_deleted += 1
+                except Exception as exc:
+                    dns_error = str(exc)[:300]
+            if conf_path.exists():
+                conf_path.unlink()
+                removed_conf = True
+            if deploy_dir.exists():
+                archive_root = deploy_dir.parent / ".archived"
+                archive_root.mkdir(parents=True, exist_ok=True)
+                archived = archive_root / f"{site.slug}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+                shutil.move(str(deploy_dir), str(archived))
+                archived_to = str(archived)
             subprocess.run(["sudo", "/usr/local/sbin/newsoft-nginx-reload"], check=True, timeout=30)
-        site.status = "failed"
-        site.last_error = "torn down"
+        site.status = "torn_down" if not dry_run else "teardown_simulated"
+        site.last_error = "torn down" if not dry_run else "simulated teardown; no files, DNS, certs, or vhost changed"
         site.updated_at = datetime.now(timezone.utc)
-        s.add(Event(kind="site_teardown", actor="sites", message=f"Site #{site.id} torn down", payload={"site_id": site.id}))
+        kind = "site_torn_down" if not dry_run else "site_torn_down_simulated"
+        s.add(Event(kind=kind, actor="sites", message=f"Site #{site.id} teardown {'simulated' if dry_run else 'executed'}", payload={"site_id": site.id, "venture_id": site.venture_id, "dry_run": dry_run, "removed_conf": removed_conf, "archived_to": archived_to, "dns_deleted": dns_deleted, "dns_error": dns_error}))
         return _site_dict(site)
 
 

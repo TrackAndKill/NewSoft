@@ -9,6 +9,7 @@ from orchestrator.db.models import Event, Idea, Memo, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 CEO = AgentSpec(
     name="ceo",

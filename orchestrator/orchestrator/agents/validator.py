@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from orchestrator.config import settings
-from orchestrator.db.models import Approval, Event, Experiment, ExperimentStage, Idea, Memo, ToolCall
+from orchestrator.db.models import Approval, Event, Experiment, ExperimentStage, Idea, Memo, ToolCall, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 from orchestrator.tools.search import TOOLS as SEARCH_TOOLS
 from orchestrator.tools.search import search_tools_available
 
@@ -28,7 +29,7 @@ STAGE1 = AgentSpec(
     role="Validator Stage 1 Research",
     model=settings.model_sonnet,
     max_tokens=2200,
-    tools=(SEARCH_TOOLS if search_tools_available() else []) + MEMORY_TOOLS,
+    tools=(SEARCH_TOOLS if search_tools_available() else []) + MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are the Validator. Run Stage 1 research_only for a venture memo. "
         "No drafting, no spend, no publishing, no contact. Use search_memory once and live web tools if available. "
@@ -42,7 +43,7 @@ STAGE2 = AgentSpec(
     role="Validator Stage 2 Outreach Draft",
     model=settings.model_sonnet,
     max_tokens=2000,
-    tools=MEMORY_TOOLS,
+    tools=MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are the Validator. Run Stage 2 outreach_draft from approved Stage 1 research. "
         "No sending, no spend, no publishing. Use search_memory once for prior lessons. "
@@ -57,6 +58,11 @@ class ExperimentRunResult:
     cost_usd: float
     status: str
 
+
+
+def _venture_id_for_memo(s, memo_id: int) -> int | None:
+    venture = s.scalars(select(Venture).where(Venture.memo_id == memo_id).order_by(Venture.created_at.desc())).first()
+    return int(venture.id) if venture else None
 
 def _parse_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -174,7 +180,9 @@ def _stage1_fallback_from_tools(run_id: int, memo: Memo, idea: Idea | None, text
 
 def _run_stage1(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea | None) -> tuple[str, dict, int, float]:
     context = {"memo_id": memo.id, "idea": {"title": idea.title if idea else "?", "summary": idea.summary if idea else "", "source": idea.source if idea else ""}, "memo": memo.content, "stage_design": stage.design_json}
-    out = run_agent(STAGE1, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1600)
+    with session_scope() as s:
+        venture_id = _venture_id_for_memo(s, memo.id)
+    out = run_agent(STAGE1, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1600, venture_id=venture_id)
     try:
         data = _parse_json(out.text)
     except ValueError:
@@ -207,8 +215,9 @@ def _run_stage2(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea 
     with session_scope() as s:
         prior = s.scalars(select(ExperimentStage).where(ExperimentStage.experiment_id == exp.id, ExperimentStage.stage_index == 1)).first()
         prior_result = prior.result_json if prior else {}
+        venture_id = _venture_id_for_memo(s, memo.id)
     context = {"memo_id": memo.id, "idea": {"title": idea.title if idea else "?", "summary": idea.summary if idea else "", "source": idea.source if idea else ""}, "memo": memo.content, "stage1_result": prior_result, "stage_design": stage.design_json}
-    out = run_agent(STAGE2, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1500)
+    out = run_agent(STAGE2, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1500, venture_id=venture_id)
     try:
         data = _parse_json(out.text)
     except Exception:

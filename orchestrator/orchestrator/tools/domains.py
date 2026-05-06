@@ -5,7 +5,7 @@ import httpx
 from sqlalchemy import select
 
 from orchestrator.config import settings
-from orchestrator.db.models import Approval, Event, MoneyTransaction, SystemState, Task
+from orchestrator.db.models import Approval, Event, MoneyTransaction, Site, SystemState, Task
 from orchestrator.db.session import session_scope
 from orchestrator.money import MAX_PER_ACTION_USD, MoneyCapExceeded, check_money_budget, record_money_spend
 
@@ -153,11 +153,12 @@ def execute_domain_registration(approval_id: int, force_live: bool | None = None
         years = int(payload.get("years") or 1)
         amount = float(payload.get("estimated_usd") or 12.0)
         cost_pennies = int(payload.get("cost_pennies") or round(amount * 100))
-        check_money_budget(s, amount)
+        venture_id = _venture_id_from_payload(s, payload)
+        check_money_budget(s, amount, venture_id=venture_id)
         state = s.get(SystemState, 1)
         dry_run = _resolve_dry_run(state, force_live)
         execute_mode = "live" if not dry_run else "simulated"
-        tx = existing or MoneyTransaction(action="register_domain", amount_usd=amount, vendor="porkbun", idempotency_key=f"register:{domain}:{approval_id}", status="pending", approval_id=approval_id, result_json=None)
+        tx = existing or MoneyTransaction(venture_id=venture_id, action="register_domain", amount_usd=amount, vendor="porkbun", idempotency_key=f"register:{domain}:{approval_id}", status="pending", approval_id=approval_id, result_json=None)
         s.add(tx); s.flush(); tx_id = tx.id
 
     result: dict[str, Any]
@@ -179,7 +180,7 @@ def execute_domain_registration(approval_id: int, force_live: bool | None = None
         tx.result_json = result
         tx.completed_at = now
         if status == "done":
-            record_money_spend(s, tx.amount_usd)
+            record_money_spend(s, tx.amount_usd, venture_id=tx.venture_id)
         _sync_tasks_for_approval(s, approval_id, status)
         s.add(Event(kind="money_transaction", actor="domain_tool", message=f"Domain registration {status}: {domain}", payload={"approval_id": approval_id, "transaction_id": tx.id, "amount_usd": tx.amount_usd, "status": status, "execute_mode": execute_mode}))
         return _transaction_dict(tx)

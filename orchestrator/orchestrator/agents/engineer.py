@@ -84,7 +84,7 @@ def break_down_first_30(plan_id: int) -> list[int]:
         venture = s.get(Venture, plan.venture_id)
         context = {"venture": {"id": venture.id, "name": venture.name, "slug": venture.slug, "charter": venture.charter}, "plan_30": plan.plan_30, "plan_id": plan.id}
     try:
-        out = run_agent(ENGINEER, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1400)
+        out = run_agent(ENGINEER, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1400, venture_id=plan.venture_id)
         data = _parse_json(out.text)
         generated = list(data.get("tasks") or [])[:10]
         out_run_id = out.run_id

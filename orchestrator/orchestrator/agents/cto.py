@@ -8,12 +8,14 @@ from orchestrator.db.models import Event, Idea, Memo, Plan, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 CTO = AgentSpec(
     name="cto",
     role="CTO",
     model=settings.model_opus,
     max_tokens=1600,
+    tools=MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are NewSoft's CTO. For a newly chartered venture, produce a practical 30/60/90-day build plan. "
         "Call search_memory once for related technical/validation lessons; if empty, continue. Prefer fast validation, tiny technical scope, and approval-gated external actions. "
@@ -44,7 +46,7 @@ def draft_plan(venture_id: int) -> int:
             "idea": {"title": idea.title if idea else "", "summary": idea.summary if idea else "", "source": idea.source if idea else ""},
             "memo": memo.content if memo else "",
         }
-    out = run_agent(CTO, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1000)
+    out = run_agent(CTO, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1000, venture_id=venture_id)
     data = _parse_json(out.text)
     content_md = (
         f"# {context['venture']['name']} 30/60/90 Plan\n\n"

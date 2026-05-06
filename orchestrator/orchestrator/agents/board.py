@@ -13,6 +13,7 @@ from orchestrator.db.models import BoardReview, Event, Experiment, Idea, Memo
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 
 def _board_spec(persona: str, prior: str) -> AgentSpec:
@@ -21,7 +22,7 @@ def _board_spec(persona: str, prior: str) -> AgentSpec:
         role=f"Board Partner ({persona})",
         model=settings.model_opus,
         max_tokens=1000,
-        tools=MEMORY_TOOLS,
+        tools=MEMORY_TOOLS + OPERATOR_TOOLS,
         system_prompt=(
             f"You are the {persona.title()} Partner on the Board of an autonomous "
             f"venture firm. Your prior: {prior} "

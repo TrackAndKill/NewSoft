@@ -86,12 +86,20 @@ class Venture(Base):
     kill_criteria_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     killed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     kill_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    daily_llm_cap_usd: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
+    daily_money_cap_usd: Mapped[float] = mapped_column(Float, default=10.0, nullable=False)
+    total_money_cap_usd: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
+    llm_spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    money_spend_today_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    money_spend_lifetime_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    spend_day: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AgentRun(Base):
     __tablename__ = "agent_runs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int | None] = mapped_column(ForeignKey("ventures.id"), nullable=True)
     agent: Mapped[str] = mapped_column(String(80), nullable=False)
     role: Mapped[str] = mapped_column(String(80), nullable=False)
     model: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -223,9 +231,27 @@ class MemoryEmbedding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Clarification(Base):
+    __tablename__ = "clarifications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asked_by_agent: Mapped[str] = mapped_column(String(80), nullable=False)
+    agent_run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    venture_id: Mapped[int | None] = mapped_column(ForeignKey("ventures.id"), nullable=True)
+    memo_id: Mapped[int | None] = mapped_column(ForeignKey("memos.id"), nullable=True)
+    question_md: Mapped[str] = mapped_column(Text, nullable=False)
+    context_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(String(20), default="normal", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="open", nullable=False)
+    answer_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class MoneyTransaction(Base):
     __tablename__ = "money_transactions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    venture_id: Mapped[int | None] = mapped_column(ForeignKey("ventures.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(120), nullable=False)
     amount_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     vendor: Mapped[str] = mapped_column(String(80), nullable=False)

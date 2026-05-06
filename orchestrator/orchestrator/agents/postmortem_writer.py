@@ -14,12 +14,14 @@ from orchestrator.db.models import AgentRun, Event, Idea, Memo, Plan, Postmortem
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
 from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 WRITER = AgentSpec(
     name="postmortem_writer",
     role="Postmortem Writer",
     model=settings.model_opus,
     max_tokens=1800,
+    tools=MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are the postmortem writer for an autonomous venture firm. "
         "Call search_memory once for similar past postmortems or lessons; if empty, continue. Write a useful, honest postmortem from the available operating record. "
@@ -98,7 +100,7 @@ def write_postmortem(venture_id: int, kill_reason: str) -> int:
 
     agent_run_id: int | None = None
     try:
-        out = run_agent(WRITER, [{"role": "user", "content": json.dumps({"kill_reason": kill_reason, **context}, indent=2, default=str)}], expected_output_tokens=1400)
+        out = run_agent(WRITER, [{"role": "user", "content": json.dumps({"kill_reason": kill_reason, **context}, indent=2, default=str)}], expected_output_tokens=1400, venture_id=venture_id)
         data = _json_from_text(out.text)
         content_md = str(data.get("content_md") or "").strip()
         lessons_md = str(data.get("lessons_md") or "").strip()

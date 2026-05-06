@@ -45,6 +45,20 @@ export const api = {
   venturePostmortem: (slug: string) => req<any>(`/api/ventures/${slug}/postmortem`),
   createPostmortem: (slug: string) => req<any>(`/api/ventures/${slug}/postmortem`, { method: "POST" }),
   triggerKillLoop: () => req<any>("/api/kill_loop/run", { method: "POST" }),
+  triggerTeardown: () => req<any>("/api/teardown/run", { method: "POST" }),
+  reviveVenture: (slug: string) => req<any>(`/api/ventures/${slug}/revive`, { method: "POST" }),
+  extendVentureGrace: (slug: string, hours: number) =>
+    req<any>(`/api/ventures/${slug}/extend_grace`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hours }),
+    }),
+  updateVentureBudgets: (slug: string, patch: Record<string, unknown>) =>
+    req<any>(`/api/ventures/${slug}/budget`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
   triggerDiscovery: () => req<any>("/api/discovery/run", { method: "POST" }),
   triggerBoard: () => req<any>("/api/board/run", { method: "POST" }),
   triggerValidator: () => req<any>("/api/validator/run", { method: "POST" }),
@@ -73,6 +87,20 @@ export const api = {
     }),
   outreach: (experimentId?: number | string) =>
     req<any>(`/api/outreach${experimentId ? `?experiment_id=${experimentId}` : ""}`),
+  clarifications: (status?: string, ventureId?: number | string) => {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (ventureId) params.set("venture_id", String(ventureId));
+    const qs = params.toString();
+    return req<any[]>(`/api/clarifications${qs ? `?${qs}` : ""}`);
+  },
+  answerClarification: (id: number, answer_md: string) =>
+    req<any>(`/api/clarifications/${id}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer_md, answered_by: "founder" }),
+    }),
+  dismissClarification: (id: number) => req<any>(`/api/clarifications/${id}/dismiss`, { method: "POST" }),
   kill: () => req<any>("/api/system/kill", { method: "POST" }),
   setSystem: (patch: Record<string, unknown>) =>
     req<any>("/api/system", {

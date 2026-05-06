@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import text
 
 from orchestrator.config import settings
-from orchestrator.db.models import AgentRun, BoardReview, Event, Memo, Postmortem, Venture
+from orchestrator.db.models import AgentRun, BoardReview, Clarification, Event, Memo, Postmortem, Venture
 from orchestrator.db.session import engine, session_scope
 
 
@@ -128,6 +128,12 @@ def _source_text(source_kind: str, source_id: int) -> tuple[str, dict[str, Any]]
         if source_kind == "board_decision":
             row = s.get(BoardReview, source_id)
             return (row.rationale, {"board_review_id": row.id, "memo_id": row.memo_id, "persona": row.persona, "vote": row.vote}) if row else None
+        if source_kind == "clarification":
+            row = s.get(Clarification, source_id)
+            if row and row.status == "answered" and row.answer_md:
+                text_value = f"Operator clarification question:\n{row.question_md}\n\nOperator answer:\n{row.answer_md}"
+                return (text_value, {"clarification_id": row.id, "venture_id": row.venture_id, "agent": row.asked_by_agent})
+            return None
     return None
 
 
@@ -136,6 +142,8 @@ def _vector_literal(vec: list[float]) -> str:
 
 
 def reindex_source(source_kind: str, source_id: int) -> int:
+    if not embeddings_available():
+        return 0
     source = _source_text(source_kind, source_id)
     if not source:
         return 0
@@ -166,6 +174,7 @@ def memory_reindex_tick() -> dict[str, Any]:
         targets += [("lesson", r.id) for r in s.query(Postmortem).limit(100).all()]
         targets += [("charter", r.id) for r in s.query(Venture).limit(100).all()]
         targets += [("board_decision", r.id) for r in s.query(BoardReview).limit(200).all()]
+        targets += [("clarification", r.id) for r in s.query(Clarification).filter(Clarification.status == "answered").limit(200).all()]
     indexed = 0
     errors = 0
     for kind, sid in targets:
@@ -189,7 +198,7 @@ def search_memory(query: str, kinds: list[str] | None = None, limit: int = 5) ->
     params: dict[str, Any] = {"embedding": _vector_literal(vector), "limit": limit}
     where = ""
     if kinds:
-        allowed = [k for k in kinds if k in {"memo", "postmortem", "charter", "lesson", "board_decision"}]
+        allowed = [k for k in kinds if k in {"memo", "postmortem", "charter", "lesson", "board_decision", "clarification"}]
         if allowed:
             where = "WHERE source_kind = ANY(:kinds)"
             params["kinds"] = allowed

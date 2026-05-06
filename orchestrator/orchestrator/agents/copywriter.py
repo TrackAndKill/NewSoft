@@ -8,12 +8,15 @@ from orchestrator.config import settings
 from orchestrator.db.models import Event, SiteContent, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
+from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 COPYWRITER = AgentSpec(
     name="copywriter",
     role="Copywriter",
     model=settings.model_sonnet,
     max_tokens=3000,
+    tools=MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are the Copywriter for an autonomous venture. Given a venture charter and target ICP, "
         "produce a single-file static landing page (HTML5 with inline CSS, no JS frameworks, no external fonts/CDN). "
@@ -68,7 +71,7 @@ def draft_landing_page(venture_id: int, signup_url: str) -> int:
         context = {"venture": {"id": venture.id, "name": venture.name, "slug": venture.slug, "charter": venture.charter}, "signup_url": signup_url}
     run_id = None
     try:
-        out = run_agent(COPYWRITER, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1800)
+        out = run_agent(COPYWRITER, [{"role": "user", "content": json.dumps(context, indent=2)}], expected_output_tokens=1800, venture_id=venture_id)
         run_id = out.run_id
         data = _parse_json(out.text)
     except Exception:

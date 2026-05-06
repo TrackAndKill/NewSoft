@@ -14,14 +14,14 @@ from orchestrator.agents.discovery import run_discovery
 from orchestrator.agents.validator import run_experiment, run_experiment_stage
 from orchestrator.db.init_db import init_db
 from orchestrator.db.models import (
-    AgentRun, Approval, BoardReview, EmailDomainBlock, EmailSuppression, Event, Experiment, ExperimentStage, Goal, Idea, Lead, Memo,
+    AgentRun, Approval, BoardReview, Clarification, EmailDomainBlock, EmailSuppression, Event, Experiment, ExperimentStage, Goal, Idea, Lead, Memo,
     MemoryEmbedding, MoneyTransaction, OutreachSend, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
 )
 from orchestrator.db.session import session_scope
 from orchestrator.digest import send_digest
 from orchestrator.money import MAX_PER_ACTION_USD
 from orchestrator.config import settings
-from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, memory_reindex_tick, site_tick, start_scheduler, validator_tick, venture_tick
+from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, memory_reindex_tick, revive_venture, site_tick, start_scheduler, teardown_tick, validator_tick, venture_tick
 from orchestrator.tools.domains import execute_domain_registration
 from orchestrator.tools.sites import execute_site_approval
 from orchestrator.tools.outreach import add_domain_block, add_suppression, execute_batch, verify_from_domain, verify_unsubscribe_token
@@ -65,6 +65,16 @@ class DomainBlockIn(BaseModel):
     domain: str
     reason: str = "manual"
     note: str | None = None
+class VentureBudgetIn(BaseModel):
+    daily_llm_cap_usd: float | None = None
+    daily_money_cap_usd: float | None = None
+    total_money_cap_usd: float | None = None
+class ClarificationAnswerIn(BaseModel):
+    answer_md: str | None = None
+    answer: str | None = None
+    answered_by: str = "founder"
+class VentureGraceIn(BaseModel):
+    hours: int = 24
 
 def _row_to_dict(row: Any) -> dict:
     return {attr.key: getattr(row, attr.key) for attr in row.__mapper__.column_attrs}
@@ -151,6 +161,9 @@ def trigger_digest(background: BackgroundTasks) -> dict:
 @app.post("/api/kill_loop/run")
 def trigger_kill_loop() -> dict:
     return kill_loop_tick()
+@app.post("/api/teardown/run")
+def trigger_teardown_tick() -> dict:
+    return teardown_tick()
 
 @app.get("/api/ideas")
 def list_ideas(limit: int = 50) -> list[dict]:
@@ -189,6 +202,36 @@ def get_venture_postmortem(slug: str) -> dict:
     if not data.get("postmortem"):
         raise HTTPException(404, "postmortem not found")
     return {"venture": data["venture"], "postmortem": data["postmortem"]}
+@app.post("/api/ventures/{slug}/budget")
+def update_venture_budget(slug: str, payload: VentureBudgetIn) -> dict:
+    with session_scope() as s:
+        venture = s.scalar(select(Venture).where(Venture.slug == slug))
+        if venture is None: raise HTTPException(404, "venture not found")
+        if payload.daily_llm_cap_usd is not None: venture.daily_llm_cap_usd = max(0.0, float(payload.daily_llm_cap_usd))
+        if payload.daily_money_cap_usd is not None: venture.daily_money_cap_usd = max(0.0, float(payload.daily_money_cap_usd))
+        if payload.total_money_cap_usd is not None: venture.total_money_cap_usd = max(0.0, float(payload.total_money_cap_usd))
+        s.add(Event(kind="venture_budget_updated", actor="founder", message=f"Budgets updated for venture {slug}", payload={"venture_id": venture.id, "daily_llm_cap_usd": venture.daily_llm_cap_usd, "daily_money_cap_usd": venture.daily_money_cap_usd, "total_money_cap_usd": venture.total_money_cap_usd}))
+        return _row_to_dict(venture)
+@app.post("/api/ventures/{slug}/budgets")
+def update_venture_budgets_alias(slug: str, payload: VentureBudgetIn) -> dict:
+    return update_venture_budget(slug, payload)
+@app.post("/api/ventures/{slug}/revive")
+def revive_venture_api(slug: str) -> dict:
+    with session_scope() as s:
+        venture = s.scalar(select(Venture).where(Venture.slug == slug))
+        if venture is None: raise HTTPException(404, "venture not found")
+        venture_id = venture.id
+    return revive_venture(venture_id)
+@app.post("/api/ventures/{slug}/extend_grace")
+def extend_venture_grace(slug: str, payload: VentureGraceIn) -> dict:
+    hours = max(1, min(int(payload.hours or 24), 24 * 30))
+    with session_scope() as s:
+        venture = s.scalar(select(Venture).where(Venture.slug == slug))
+        if venture is None: raise HTTPException(404, "venture not found")
+        base = venture.killed_at or datetime.now(timezone.utc)
+        venture.killed_at = base + timedelta(hours=hours)
+        s.add(Event(kind="venture_teardown_grace_extended", actor="founder", message=f"Teardown grace extended for venture {slug}", payload={"venture_id": venture.id, "hours": hours}))
+        return _row_to_dict(venture)
 @app.post("/api/ventures/{slug}/postmortem")
 def create_venture_postmortem(slug: str) -> dict:
     with session_scope() as s:
@@ -425,3 +468,46 @@ def money_status() -> dict:
 @app.get("/api/money/transactions")
 def money_transactions(limit: int = 50) -> list[dict]:
     with session_scope() as s: return [_row_to_dict(r) for r in s.scalars(select(MoneyTransaction).order_by(desc(MoneyTransaction.created_at)).limit(limit)).all()]
+
+@app.get("/api/clarifications")
+def list_clarifications(status: str | None = None, venture_id: int | None = None, limit: int = 100) -> list[dict]:
+    with session_scope() as s:
+        q = select(Clarification)
+        if status:
+            q = q.where(Clarification.status == status)
+        if venture_id is not None:
+            q = q.where(Clarification.venture_id == venture_id)
+        q = q.order_by(desc(Clarification.created_at)).limit(limit)
+        return [_row_to_dict(r) for r in s.scalars(q).all()]
+
+@app.post("/api/clarifications/{clarification_id}/answer")
+def answer_clarification(clarification_id: int, payload: ClarificationAnswerIn) -> dict:
+    answer = (payload.answer_md or payload.answer or "").strip()
+    if not answer:
+        raise HTTPException(400, "answer_md is required")
+    from orchestrator.memory import reindex_source
+    with session_scope() as s:
+        row = s.get(Clarification, clarification_id)
+        if row is None:
+            raise HTTPException(404, "clarification not found")
+        row.answer_md = answer
+        row.answered_by = payload.answered_by[:80]
+        row.answered_at = datetime.now(timezone.utc)
+        row.status = "answered"
+        s.add(Event(kind="clarification_answered", actor=row.answered_by, message=f"Clarification #{row.id} answered", payload={"clarification_id": row.id, "venture_id": row.venture_id}))
+        data = _row_to_dict(row)
+    indexed = reindex_source("clarification", clarification_id)
+    data["indexed_chunks"] = indexed
+    return data
+
+@app.post("/api/clarifications/{clarification_id}/dismiss")
+def dismiss_clarification(clarification_id: int, answered_by: str = "founder") -> dict:
+    with session_scope() as s:
+        row = s.get(Clarification, clarification_id)
+        if row is None:
+            raise HTTPException(404, "clarification not found")
+        row.status = "dismissed"
+        row.answered_by = answered_by[:80]
+        row.answered_at = datetime.now(timezone.utc)
+        s.add(Event(kind="clarification_dismissed", actor=row.answered_by, message=f"Clarification #{row.id} dismissed", payload={"clarification_id": row.id, "venture_id": row.venture_id}))
+        return _row_to_dict(row)

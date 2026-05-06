@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import desc, func, select
 
 from orchestrator.config import settings
-from orchestrator.db.models import Approval, EmailDomainBlock, EmailSuppression, Event, MoneyTransaction, OutreachSend, SystemState
+from orchestrator.db.models import Approval, EmailDomainBlock, EmailSuppression, Event, Experiment, MoneyTransaction, OutreachSend, SystemState, Venture
 from orchestrator.db.session import session_scope
 
 log = logging.getLogger(__name__)
@@ -205,7 +205,7 @@ def send_email(to: str, subject: str, body: str, *, experiment_id: int, dry_run:
         if not dry_run:
             _ensure_live_allowed()
         row = _insert_send_row(s=s, experiment_id=experiment_id, rh=rh, domain=domain, subject=subject, status="dry_run" if dry_run else "queued", dry_run=dry_run, audit_payload=audit_payload)
-        tx = MoneyTransaction(action="outreach_send_email", amount_usd=0.0, vendor="resend", idempotency_key=f"outreach:{experiment_id}:{rh}", status="simulated" if dry_run else "pending", result_json={"outreach_send_id": row.id})
+        tx = MoneyTransaction(venture_id=_venture_id_for_experiment(s, experiment_id), action="outreach_send_email", amount_usd=0.0, vendor="resend", idempotency_key=f"outreach:{experiment_id}:{rh}", status="simulated" if dry_run else "pending", result_json={"outreach_send_id": row.id})
         s.add(tx)
         send_id = row.id
     if dry_run:

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -222,6 +223,51 @@ def kill_loop_tick() -> dict:
             s.add(Event(kind="no_kill_candidates", actor="kill_evaluator", message=f"Kill loop evaluated {evaluated} venture(s); no approvals filed.", payload={"evaluated": evaluated}))
     return {"evaluated": evaluated, "created_approvals": created}
 
+def teardown_tick() -> dict:
+    """File teardown_site approvals for killed ventures after 24h grace. Never executes teardown directly."""
+    created: list[int] = []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    with session_scope() as s:
+        ventures = s.scalars(select(Venture).where(Venture.status == "killed", Venture.killed_at.is_not(None), Venture.killed_at <= cutoff)).all()
+        for venture in ventures:
+            site = s.scalars(select(Site).where(Site.venture_id == venture.id).order_by(Site.created_at.desc())).first()
+            if site is None:
+                continue
+            existing = s.scalars(select(Approval).where(Approval.action == "teardown_site", Approval.status.in_(["pending", "approved"]))).all()
+            if any((a.payload or {}).get("site_id") == site.id for a in existing):
+                continue
+            approval = Approval(
+                requested_by="kill_loop",
+                action="teardown_site",
+                payload={"site_id": site.id, "venture_id": venture.id, "domain": site.domain, "reason": "killed_24h_grace_elapsed"},
+                rationale=f"Venture {venture.slug} was killed more than 24h ago; approve teardown of live site artifacts only.",
+                status="pending",
+            )
+            s.add(approval); s.flush(); created.append(approval.id)
+            s.add(Event(kind="teardown_approval_requested", actor="teardown_tick", message=f"Teardown approval #{approval.id} requested for venture #{venture.id} site #{site.id}", payload={"approval_id": approval.id, "venture_id": venture.id, "site_id": site.id}))
+    return {"created_approvals": created, "count": len(created)}
+
+
+def revive_venture(venture_id: int, *, actor: str = "founder", extension_hours: int | None = None) -> dict:
+    with session_scope() as s:
+        venture = s.get(Venture, int(venture_id))
+        if venture is None:
+            raise ValueError(f"Venture {venture_id} not found")
+        venture.status = "chartered"
+        venture.killed_at = None
+        venture.kill_reason = None
+        cancelled = 0
+        approvals = s.scalars(select(Approval).where(Approval.action == "teardown_site", Approval.status == "pending")).all()
+        for approval in approvals:
+            if (approval.payload or {}).get("venture_id") == venture.id:
+                approval.status = "cancelled"
+                approval.decided_by = actor
+                approval.decided_at = datetime.now(timezone.utc)
+                cancelled += 1
+        s.add(Event(kind="venture_revived", actor=actor, message=f"Venture #{venture.id} revived; cancelled {cancelled} teardown approval(s)", payload={"venture_id": venture.id, "cancelled_teardowns": cancelled, "extension_hours": extension_hours}))
+        return {"venture_id": venture.id, "status": venture.status, "cancelled_teardowns": cancelled}
+
+
 def memory_reindex_tick() -> dict:
     from orchestrator.memory import memory_reindex_tick as run_memory_reindex_tick
     try:
@@ -240,6 +286,7 @@ def start_scheduler() -> None:
     scheduler.add_job(site_tick, "interval", minutes=5, id="site_tick", replace_existing=True)
     scheduler.add_job(digest_tick, "cron", hour=8, minute=0, id="digest_tick", replace_existing=True)
     scheduler.add_job(kill_loop_tick, "cron", day_of_week="sun", hour=9, minute=0, id="kill_loop_tick", replace_existing=True)
+    scheduler.add_job(teardown_tick, "interval", hours=1, id="teardown_tick", replace_existing=True)
     scheduler.add_job(memory_reindex_tick, "cron", hour=4, minute=0, id="memory_reindex_tick", replace_existing=True)
     if not scheduler.running: scheduler.start()
     log.info("Scheduler started.")

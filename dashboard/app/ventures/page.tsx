@@ -23,6 +23,7 @@ export default function VenturesPage() {
             <th>Name</th>
             <th>Slug</th>
             <th>Status</th>
+            <th>Spend today</th>
           </tr>
         </thead>
         <tbody>
@@ -38,6 +39,7 @@ export default function VenturesPage() {
               <td>
                 <span className="pill">{v.status}</span>
               </td>
+              <td className="muted">LLM ${Number(v.llm_spend_today_usd || 0).toFixed(4)} · Money ${Number(v.money_spend_today_usd || 0).toFixed(2)}</td>
             </tr>
           ))}
         </tbody>

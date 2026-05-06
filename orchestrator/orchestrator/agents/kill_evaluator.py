@@ -17,12 +17,15 @@ from orchestrator.config import settings
 from orchestrator.db.models import Event, Experiment, Lead, Plan, Site, Task, Venture
 from orchestrator.db.session import session_scope
 from orchestrator.runtime import AgentSpec, run_agent
+from orchestrator.tools.memory import TOOLS as MEMORY_TOOLS
+from orchestrator.tools.operator import TOOLS as OPERATOR_TOOLS
 
 EVALUATOR = AgentSpec(
     name="kill_evaluator",
     role="Kill Evaluator",
     model=settings.model_sonnet,
     max_tokens=1200,
+    tools=MEMORY_TOOLS + OPERATOR_TOOLS,
     system_prompt=(
         "You are a conservative kill evaluator for an autonomous venture firm. "
         "You review one venture and decide whether its explicit kill criteria are clearly hit. "
@@ -110,7 +113,7 @@ def evaluate_venture(venture_id: int) -> dict[str, Any]:
     if not context["kill_criteria"]:
         return _safe_fallback(context)
     try:
-        out = run_agent(EVALUATOR, [{"role": "user", "content": json.dumps(context, indent=2, default=str)}], expected_output_tokens=900)
+        out = run_agent(EVALUATOR, [{"role": "user", "content": json.dumps(context, indent=2, default=str)}], expected_output_tokens=900, venture_id=venture_id)
         result = _json_from_text(out.text)
         result["agent_run_id"] = out.run_id
         return result
