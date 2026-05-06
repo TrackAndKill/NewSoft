@@ -173,10 +173,41 @@ class OutreachSend(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id"), nullable=False)
     recipient_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    recipient_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subject: Mapped[str] = mapped_column(String(300), nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="queued", nullable=False)
     provider_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    audit_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    complained_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmailSuppression(Base):
+    __tablename__ = "email_suppressions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recipient_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    recipient_domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmailDomainBlock(Base):
+    __tablename__ = "email_domain_blocks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

@@ -47,7 +47,7 @@ STAGE2 = AgentSpec(
         "You are the Validator. Run Stage 2 outreach_draft from approved Stage 1 research. "
         "No sending, no spend, no publishing. Use search_memory once for prior lessons. "
         "Return STRICT JSON: {\"email_variants\":[{\"subject\":\"...\",\"body\":\"...\"}],"
-        "\"dm_template\":\"...\",\"landing_page_brief\":\"...\",\"stage3_plan\":\"...\",\"operator_review_notes\":[\"...\"]}."
+        "\"dm_template\":\"...\",\"landing_page_brief\":\"...\",\"stage3_plan\":\"...\",\"prospects\":[\"founder@example.com\"],\"operator_review_notes\":[\"...\"]}."
     ),
 )
 
@@ -197,6 +197,7 @@ def _stage2_fallback_from_text(text: str) -> dict:
         "dm_template": "Draft only — not sent. Saw your post about outgrowing a no-code stack. Would a fixed-scope two-week migration sprint that exports your data model, scaffolds Next.js/Postgres, and ports top flows be useful enough to discuss?",
         "landing_page_brief": "Draft-only landing brief: headline 'Escape your no-code ceiling in 2 weeks'; bullets for schema export, Next.js/Postgres scaffold, top-3 flows ported; CTA for discovery call/intake. Do not publish in Phase 7 smoke.",
         "stage3_plan": "Prepare exact prospect list, final copy, and validation metrics for operator approval. Stage 3 remains pending and must not send email, publish, spend, or contact prospects without explicit live approval.",
+        "prospects": ["founder1@example-validation.test", "founder2@example-validation.test", "founder3@another-validation.test"],
         "operator_review_notes": ["Recovered from malformed JSON using the model's draft text.", "No outreach was sent and no public asset was published."],
         "fallback_reason": "malformed_stage2_json_preserved_as_draft",
     }
@@ -215,6 +216,51 @@ def _run_stage2(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea 
     emails = data.get("email_variants", [])[:3]
     md = "\n".join([f"# Stage 2 drafts: memo #{memo.id}", "", "## Email variants", *[f"### Variant {i+1}: {e.get('subject','')}\n{e.get('body','')}" for i, e in enumerate(emails)], "", "## DM template", data.get("dm_template", ""), "", "## Landing page brief", data.get("landing_page_brief", ""), "", "## Proposed Stage 3", data.get("stage3_plan", "")])
     return md, data, out.run_id, out.cost_usd
+
+
+def _run_stage3(stage: ExperimentStage, exp: Experiment, memo: Memo, idea: Idea | None) -> tuple[str, dict, int, float]:
+    with session_scope() as s:
+        prior = s.scalars(select(ExperimentStage).where(ExperimentStage.experiment_id == exp.id, ExperimentStage.stage_index == 2)).first()
+        prior_result = prior.result_json if prior else {}
+    emails = prior_result.get("email_variants") or []
+    first = emails[0] if emails else {}
+    subject = first.get("subject") or "Quick question about your monetization layer"
+    body_text = first.get("body") or "Hi — noticed your no-code product has traction. Would a 48-hour revenue audit be useful? Unsubscribe: {{unsubscribe_url}}"
+    if "unsubscribe" not in body_text.lower():
+        body_text = body_text.rstrip() + "\n\nUnsubscribe: {{unsubscribe_url}}"
+    prospects = [p for p in (prior_result.get("prospects") or []) if isinstance(p, str) and "@" in p]
+    if not prospects:
+        prospects = ["founder1@example-validation.test", "founder2@example-validation.test", "founder3@another-validation.test"]
+    batches = []
+    max_batch = max(1, settings.outreach_per_batch_max)
+    with session_scope() as s:
+        existing = s.scalars(select(Approval).where(Approval.action == "send_outreach_batch", Approval.payload["stage_id"].as_integer() == stage.id)).all()
+        if not existing:
+            for i in range(0, len(prospects), max_batch):
+                recipients = prospects[i:i + max_batch]
+                approval = Approval(
+                    requested_by="validator",
+                    action="send_outreach_batch",
+                    payload={
+                        "experiment_id": exp.id,
+                        "stage_id": stage.id,
+                        "recipients": recipients,
+                        "subject": subject,
+                        "body_text": body_text,
+                        "body_html": None,
+                        "copy_variant": "A",
+                        "estimated_count": len(recipients),
+                    },
+                    rationale=f"Approve dry-run/live outreach batch for experiment #{exp.id}: {len(recipients)} recipient(s), capped at {max_batch}. Operator controls execute_live.",
+                    status="pending",
+                )
+                s.add(approval); s.flush()
+                batches.append(approval.id)
+        else:
+            batches = [a.id for a in existing]
+        s.add(Event(kind="outreach_batch_approvals_requested", actor="validator", message=f"Stage 3 filed {len(batches)} outreach batch approval(s) for experiment #{exp.id}", payload={"experiment_id": exp.id, "stage_id": stage.id, "approval_ids": batches}))
+    md = "\n".join([f"# Stage 3 validation batches: memo #{memo.id}", "", f"Prepared {len(batches)} send_outreach_batch approval(s).", "No email was sent, no public asset was published, and no money was spent.", "", "Operator must approve each batch explicitly and choose execute_live=false for dry-run smoke or execute_live=true for live go-live."])
+    return md, {"approval_ids": batches, "recipient_count": len(prospects), "batch_max": max_batch, "dry_run_only_phase8": True}, None, 0.0
 
 
 def _create_next_stage(s, exp: Experiment, completed_index: int) -> None:
@@ -245,10 +291,6 @@ def run_experiment_stage(approval_id: int, force_live: bool | None = None) -> Ex
         memo, idea = _memo_context(s, exp.memo_id)
         if stage.status == "done":
             return ExperimentRunResult(exp.id, stage.cost_usd, stage.status)
-        if stage.stage_index == 3:
-            # Phase 7 ships the gate but smoke must stop before live validation.
-            stage.status = "pending_approval"
-            raise ValueError("Stage 3 validation_run is gated for a later operator-approved live run; Phase 7 smoke must not execute it")
         stage.status = "running"
         exp.current_stage = stage.stage_name
         exp.status = "running"
@@ -258,6 +300,8 @@ def run_experiment_stage(approval_id: int, force_live: bool | None = None) -> Ex
         result_md, result_json, run_id, cost = _run_stage1(stage, exp, memo, idea)
     elif stage_index == 2:
         result_md, result_json, run_id, cost = _run_stage2(stage, exp, memo, idea)
+    elif stage_index == 3:
+        result_md, result_json, run_id, cost = _run_stage3(stage, exp, memo, idea)
     else:
         raise ValueError(f"Unsupported stage {stage_index}")
     status = "done" if cost <= STAGE_COST_CAPS[stage_index] else "failed"
@@ -273,7 +317,7 @@ def run_experiment_stage(approval_id: int, force_live: bool | None = None) -> Ex
         stage.agent_run_id = run_id
         stage.cost_usd = cost
         stage.completed_at = datetime.now(timezone.utc)
-        exp.status = "done" if stage_index == 2 and status == "done" else status
+        exp.status = "done" if stage_index == 3 and status == "done" else status
         exp.result_md = (exp.result_md or "") + f"\n\n{result_md}"
         exp.cost_usd = float(exp.cost_usd or 0) + cost
         exp.current_stage = STAGES.get(stage_index + 1, (stage.stage_name,))[0] if status == "done" and stage_index < 3 else stage.stage_name

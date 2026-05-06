@@ -4,7 +4,8 @@ from typing import Any
 import hashlib
 import re
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
@@ -13,8 +14,8 @@ from orchestrator.agents.discovery import run_discovery
 from orchestrator.agents.validator import run_experiment, run_experiment_stage
 from orchestrator.db.init_db import init_db
 from orchestrator.db.models import (
-    AgentRun, Approval, BoardReview, Event, Experiment, ExperimentStage, Goal, Idea, Lead, Memo,
-    MemoryEmbedding, MoneyTransaction, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
+    AgentRun, Approval, BoardReview, EmailDomainBlock, EmailSuppression, Event, Experiment, ExperimentStage, Goal, Idea, Lead, Memo,
+    MemoryEmbedding, MoneyTransaction, OutreachSend, Plan, Postmortem, Site, SiteContent, SystemState, Task, ToolCall, Venture,
 )
 from orchestrator.db.session import session_scope
 from orchestrator.digest import send_digest
@@ -23,6 +24,8 @@ from orchestrator.config import settings
 from orchestrator.rituals.scheduler import board_tick, discovery_tick, kill_loop_tick, memory_reindex_tick, site_tick, start_scheduler, validator_tick, venture_tick
 from orchestrator.tools.domains import execute_domain_registration
 from orchestrator.tools.sites import execute_site_approval
+from orchestrator.tools.outreach import add_domain_block, add_suppression, execute_batch, verify_from_domain, verify_unsubscribe_token
+from orchestrator.webhooks import handle_resend_event, verify_resend_signature
 from orchestrator.agents.postmortem_writer import write_postmortem
 
 _rate_hits: dict[tuple[int, str], list[datetime]] = {}
@@ -30,7 +33,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db(); start_scheduler(); yield
+    init_db(); verify_from_domain(); start_scheduler(); yield
 
 app = FastAPI(title="NewSoft Orchestrator", version="0.5.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -54,9 +57,17 @@ class MemorySearchIn(BaseModel):
     query: str
     kinds: list[str] | None = None
     limit: int = 10
+class SuppressionIn(BaseModel):
+    email: str
+    reason: str = "manual"
+    note: str | None = None
+class DomainBlockIn(BaseModel):
+    domain: str
+    reason: str = "manual"
+    note: str | None = None
 
 def _row_to_dict(row: Any) -> dict:
-    return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+    return {attr.key: getattr(row, attr.key) for attr in row.__mapper__.column_attrs}
 def _empty_cost_bucket() -> dict:
     return {"total_usd": 0.0, "by_agent": {}}
 
@@ -238,6 +249,71 @@ def public_signup(slug: str, payload: SignupIn, request: Request) -> dict:
         s.add(lead); s.flush(); s.add(Event(kind="lead_captured", actor="public", message=f"Lead captured for site {site.slug}", payload={"site_id": site.id, "lead_id": lead.id, "source": source}))
         return {"ok": True}
 
+@app.post("/api/public/webhooks/resend")
+async def resend_webhook(request: Request) -> dict:
+    body = await request.body()
+    if not verify_resend_signature(body, request.headers):
+        with session_scope() as s:
+            s.add(Event(kind="webhook_rejected", actor="resend", message="Resend webhook rejected", payload={"reason": "signature_or_replay"}))
+        raise HTTPException(401, "invalid webhook signature")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "invalid json") from exc
+    return handle_resend_event(payload)
+
+@app.api_route("/api/public/unsubscribe", methods=["GET", "POST"], response_class=HTMLResponse)
+def public_unsubscribe(t: str) -> HTMLResponse:
+    try:
+        data = verify_unsubscribe_token(t)
+    except ValueError as exc:
+        raise HTTPException(400, "invalid unsubscribe token") from exc
+    rh = data["rh"]
+    with session_scope() as s:
+        existing = s.scalars(select(EmailSuppression).where(EmailSuppression.recipient_hash == rh)).first()
+        if existing is None:
+            s.add(EmailSuppression(recipient_hash=rh, recipient_domain="unknown", reason="unsubscribe", source="unsub_link", metadata_json={"experiment_id": data.get("eid")}))
+        s.add(Event(kind="email_unsubscribed", actor="public", message="Recipient unsubscribed", payload={"experiment_id": data.get("eid")}))
+    return HTMLResponse("<html><body><h1>You are unsubscribed</h1><p>No further outreach will be sent.</p></body></html>")
+
+@app.get("/api/suppressions")
+def list_suppressions(limit: int = 100, reason: str | None = None) -> dict:
+    with session_scope() as s:
+        q = select(EmailSuppression).order_by(desc(EmailSuppression.created_at)).limit(limit)
+        if reason:
+            q = select(EmailSuppression).where(EmailSuppression.reason == reason).order_by(desc(EmailSuppression.created_at)).limit(limit)
+        rows = [_row_to_dict(r) for r in s.scalars(q).all()]
+        breakdown = {k: int(v) for k, v in s.execute(select(EmailSuppression.reason, func.count(EmailSuppression.id)).group_by(EmailSuppression.reason)).all()}
+        domains = [_row_to_dict(r) for r in s.scalars(select(EmailDomainBlock).order_by(desc(EmailDomainBlock.created_at)).limit(limit)).all()]
+        return {"items": rows, "breakdown": breakdown, "domain_blocks": domains}
+
+@app.post("/api/suppressions")
+def create_suppression(payload: SuppressionIn) -> dict:
+    try:
+        return add_suppression(payload.email, reason=payload.reason or "manual", source="operator", metadata={"note": payload.note} if payload.note else {})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post("/api/domain_blocks")
+def create_domain_block(payload: DomainBlockIn) -> dict:
+    try:
+        return add_domain_block(payload.domain, reason=payload.reason or "manual", source="operator", metadata={"note": payload.note} if payload.note else {})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/api/outreach")
+def list_outreach(limit: int = 100, experiment_id: int | None = None) -> dict:
+    with session_scope() as s:
+        q = select(OutreachSend).order_by(desc(OutreachSend.created_at)).limit(limit)
+        if experiment_id is not None:
+            q = select(OutreachSend).where(OutreachSend.experiment_id == experiment_id).order_by(desc(OutreachSend.created_at)).limit(limit)
+        rows = [_row_to_dict(r) for r in s.scalars(q).all()]
+        counts = [
+            {"experiment_id": eid, "status": status, "count": int(count)}
+            for eid, status, count in s.execute(select(OutreachSend.experiment_id, OutreachSend.status, func.count(OutreachSend.id)).group_by(OutreachSend.experiment_id, OutreachSend.status)).all()
+        ]
+        return {"items": rows, "counts": counts}
+
 @app.get("/api/events")
 def list_events(limit: int = 100) -> list[dict]:
     with session_scope() as s: return [_row_to_dict(r) for r in s.scalars(select(Event).order_by(desc(Event.created_at)).limit(limit)).all()]
@@ -286,7 +362,7 @@ def list_approvals(status: str = "pending") -> list[dict]:
 
 @app.post("/api/approvals/{approval_id}")
 def decide_approval(approval_id: int, payload: ApprovalDecision, background: BackgroundTasks) -> dict:
-    should_run_experiment = should_run_stage = should_register_domain = should_site_action = should_kill_venture = False
+    should_run_experiment = should_run_stage = should_register_domain = should_site_action = should_kill_venture = should_outreach_batch = False
     force_live = payload.execute_live if payload.approve else None
     with session_scope() as s:
         a = s.get(Approval, approval_id)
@@ -302,6 +378,7 @@ def decide_approval(approval_id: int, payload: ApprovalDecision, background: Bac
         should_register_domain = a.status == "approved" and a.action == "register_domain"
         should_site_action = a.status == "approved" and a.action in {"configure_dns", "deploy_landing_page", "teardown_site"}
         should_kill_venture = a.status == "approved" and a.action == "kill_venture"
+        should_outreach_batch = a.status == "approved" and a.action == "send_outreach_batch"
         execute_mode = "live" if force_live is True else "simulated" if force_live is False else "system"
         s.add(Event(kind="approval_decided", actor=payload.decided_by, message=f"Approval #{a.id} {a.status}: {a.action}", payload={"approval_id": a.id, "execute_mode": execute_mode}))
         data = _row_to_dict(a)
@@ -310,6 +387,7 @@ def decide_approval(approval_id: int, payload: ApprovalDecision, background: Bac
     if should_register_domain: background.add_task(execute_domain_registration, approval_id, force_live)
     if should_site_action: background.add_task(execute_site_approval, approval_id, force_live)
     if should_kill_venture: background.add_task(execute_kill_venture_approval, approval_id)
+    if should_outreach_batch: background.add_task(execute_batch, approval_id, force_live)
     return data
 
 

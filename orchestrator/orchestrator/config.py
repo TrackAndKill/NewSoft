@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
 
     resend_api_key: str = ""
+    resend_webhook_secret: str = ""
+    outreach_domain_cap: int = 3
+    outreach_throttle_seconds: int = 60
+    outreach_per_batch_max: int = 10
+    unsubscribe_secret: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""

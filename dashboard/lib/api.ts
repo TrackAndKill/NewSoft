@@ -1,7 +1,7 @@
 export const API =
   typeof window === "undefined"
     ? process.env.INTERNAL_API_URL || "http://127.0.0.1:8000"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    : process.env.NEXT_PUBLIC_API_URL || "";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, { cache: "no-store", ...init });
@@ -58,6 +58,21 @@ export const api = {
   sites: () => req<any[]>("/api/sites"),
   site: (slug: string) => req<any>(`/api/sites/${slug}`),
   siteLeads: (slug: string) => req<any[]>(`/api/sites/${slug}/leads`),
+  suppressions: (reason?: string) => req<any>(`/api/suppressions${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`),
+  createSuppression: (email: string, reason = "manual", note = "") =>
+    req<any>("/api/suppressions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, reason, note }),
+    }),
+  createDomainBlock: (domain: string, reason = "manual", note = "") =>
+    req<any>("/api/domain_blocks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain, reason, note }),
+    }),
+  outreach: (experimentId?: number | string) =>
+    req<any>(`/api/outreach${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   kill: () => req<any>("/api/system/kill", { method: "POST" }),
   setSystem: (patch: Record<string, unknown>) =>
     req<any>("/api/system", {

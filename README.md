@@ -79,6 +79,8 @@ The script:
 ## Runbooks
 
 - `infra/UPGRADE_PHASE6.md` — Phase 6 execute-live/postmortem/audit upgrade checklist.
+- `infra/UPGRADE_PHASE8.md` — Phase 8 outreach safety upgrade checklist.
+- `infra/OUTREACH_GO_LIVE.md` — first live outreach send runbook, DNS checks, self-test, and kill switch.
 - `infra/KEY_ROTATION.md` — Rotation procedures for Anthropic, Brave, Resend, Porkbun, dashboard auth, lead pepper, and GitHub deploy keys.
 
 ## Safety rails

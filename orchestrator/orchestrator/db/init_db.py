@@ -15,6 +15,15 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("ventures", "kill_criteria_json", "JSON"),
     ("ventures", "killed_at", "TIMESTAMP WITH TIME ZONE"),
     ("ventures", "kill_reason", "TEXT"),
+    ("outreach_sends", "recipient_domain", "VARCHAR(255)"),
+    ("outreach_sends", "audit_payload", "JSON"),
+    ("outreach_sends", "error", "TEXT"),
+    ("outreach_sends", "delivered_at", "TIMESTAMP WITH TIME ZONE"),
+    ("outreach_sends", "opened_at", "TIMESTAMP WITH TIME ZONE"),
+    ("outreach_sends", "clicked_at", "TIMESTAMP WITH TIME ZONE"),
+    ("outreach_sends", "bounced_at", "TIMESTAMP WITH TIME ZONE"),
+    ("outreach_sends", "complained_at", "TIMESTAMP WITH TIME ZONE"),
+    ("outreach_sends", "cancelled", "BOOLEAN NOT NULL DEFAULT false"),
 ]
 
 
@@ -25,6 +34,9 @@ def _run_column_migrations() -> None:
         conn.execute(text("UPDATE system_state SET money_daily_cap_usd = COALESCE(money_daily_cap_usd, :cap)"), {"cap": settings.money_daily_cap_usd})
         conn.execute(text("UPDATE system_state SET money_spend_today_usd = COALESCE(money_spend_today_usd, 0.0)"))
         conn.execute(text("UPDATE system_state SET money_spend_day = COALESCE(money_spend_day, now())"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_suppressions_domain ON email_suppressions (recipient_domain)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_email_domain_blocks_domain ON email_domain_blocks (domain)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_sends_experiment_domain ON outreach_sends (experiment_id, recipient_domain)"))
 
 
 def _run_vector_migrations() -> None:
