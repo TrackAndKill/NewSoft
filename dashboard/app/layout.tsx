@@ -6,29 +6,42 @@ export const metadata: Metadata = {
   description: "Autonomous firm dashboard",
 };
 
+const NAV: Array<[string, string]> = [
+  ["/", "Overview"],
+  ["/goals", "Goals"],
+  ["/ideas", "Ideas"],
+  ["/memos", "Memos"],
+  ["/board", "Board"],
+  ["/ventures", "Ventures"],
+  ["/experiments", "Experiments"],
+  ["/memory", "Memory"],
+  ["/postmortems", "Postmortems"],
+  ["/approvals", "Approvals"],
+  ["/suppressions", "Suppressions"],
+  ["/outreach", "Outreach"],
+  ["/clarifications", "Clarifications"],
+  ["/money", "Money"],
+  ["/events", "Activity"],
+];
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <header style={{ padding: "16px 24px", borderBottom: "1px solid #222", display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <strong>NewSoft</strong>
-          <a href="/">Overview</a>
-          <a href="/goals">Goals</a>
-          <a href="/ideas">Ideas</a>
-          <a href="/memos">Memos</a>
-          <a href="/board">Board</a>
-          <a href="/ventures">Ventures</a>
-          <a href="/experiments">Experiments</a>
-          <a href="/memory">Memory</a>
-          <a href="/postmortems">Postmortems</a>
-          <a href="/approvals">Approvals</a>
-          <a href="/suppressions">Suppressions</a>
-          <a href="/outreach">Outreach</a>
-          <a href="/clarifications">Clarifications</a>
-          <a href="/money">Money</a>
-          <a href="/events">Activity</a>
+        <header className="app-header">
+          <span className="brand">
+            <span className="brand-dot" aria-hidden />
+            NewSoft
+          </span>
+          <nav>
+            {NAV.map(([href, label]) => (
+              <a key={href} href={href}>{label}</a>
+            ))}
+          </nav>
         </header>
-        <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>{children}</main>
+        <main style={{ padding: "28px 24px 80px", maxWidth: 1200, margin: "0 auto" }}>
+          {children}
+        </main>
       </body>
     </html>
   );
