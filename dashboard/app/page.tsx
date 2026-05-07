@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { kindClass } from "@/lib/event-styles";
+import { timeAgo, fullTime } from "@/lib/format";
 
 function money(n: any) {
   const value = Number(n || 0);
@@ -66,52 +67,54 @@ export default function Overview() {
         </div>
       </div>
 
-      <div className="card">
-        <div
-          className="row"
-          style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 24 }}
-        >
-          <div style={{ minWidth: 220 }}>
-            <div
-              className="muted"
-              style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, fontWeight: 600 }}
-            >
-              System
-            </div>
-            <div className="row" style={{ gap: 6 }}>
-              <span className={`pill upper ${status?.active ? "success" : "danger"}`}>
+      {/* Hero: system + spend */}
+      <div className="card hero">
+        <div className="cols-2">
+          <div>
+            <div className="section-label">System</div>
+            <div className="row" style={{ gap: 10, alignItems: "center" }}>
+              <span className={`dot ${status?.active ? "success" : "danger"}`} aria-hidden />
+              <span className="hero-num sm" style={{ letterSpacing: "-0.01em" }}>
                 {status?.active ? "Active" : "Halted"}
               </span>
               <span className={`pill upper ${status?.dry_run ? "warning" : "live"}`}>
                 {status?.dry_run ? "Dry-run" : "Live"}
               </span>
             </div>
+            <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+              {status?.active
+                ? "Scheduled rituals are running."
+                : "Kill switch engaged — no agents will run."}
+            </div>
           </div>
 
-          <div style={{ flex: 1, minWidth: 280 }}>
-            <div
-              className="muted"
-              style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8, fontWeight: 600 }}
-            >
-              LLM spend today
-            </div>
+          <div>
+            <div className="section-label">LLM spend today</div>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-              <span className="num" style={{ fontSize: 18, fontWeight: 600 }}>
-                ${spendToday.toFixed(4)}
-              </span>
+              <span className="hero-num">${spendToday.toFixed(4)}</span>
               <span className="muted num" style={{ fontSize: 12 }}>
-                / cap ${spendCap.toFixed(2)}
+                of cap ${spendCap.toFixed(2)}
               </span>
             </div>
             <div className={`progress ${spendCls}`}>
               <div className="fill" style={{ width: `${spendPct}%` }} />
             </div>
+            <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+              {spendPct >= 90
+                ? "Near cap — agents will start refusing runs."
+                : spendPct >= 70
+                ? "Approaching cap."
+                : `${(100 - spendPct).toFixed(0)}% headroom remaining.`}
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Costs */}
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Model costs</h2>
+        <div className="card-head">
+          <h2>Model costs</h2>
+        </div>
         <div className="stats">
           <div className="stat">
             <div className="label">Today</div>
@@ -128,7 +131,10 @@ export default function Overview() {
         </div>
         <h3>Today by agent</h3>
         {Object.entries(todayByAgent).length === 0 ? (
-          <div className="empty">No model spend today yet.</div>
+          <div className="empty">
+            <strong>No model spend yet today</strong>
+            Agents are quiet. Trigger discovery or validator to wake them up.
+          </div>
         ) : (
           <table>
             <tbody>
@@ -148,13 +154,23 @@ export default function Overview() {
         <table>
           <thead>
             <tr>
-              <th style={{ width: 90 }}>Time</th>
+              <th style={{ width: 110 }}>When</th>
               <th style={{ width: 150 }}>Actor</th>
-              <th style={{ width: 180 }}>Kind</th>
+              <th style={{ width: 200 }}>Kind</th>
               <th>Message</th>
             </tr>
           </thead>
           <tbody>
+            {events.length === 0 && (
+              <tr>
+                <td colSpan={4}>
+                  <div className="empty" style={{ margin: 12 }}>
+                    <strong>No events yet</strong>
+                    Activity will appear here as agents run.
+                  </div>
+                </td>
+              </tr>
+            )}
             {events.slice(0, 30).map((e) => {
               const runId = e.payload?.run_id || e.payload?.agent_run_id;
               return (
@@ -163,7 +179,9 @@ export default function Overview() {
                   onClick={() => runId && (window.location.href = `/runs/${runId}`)}
                   style={{ cursor: runId ? "pointer" : "default" }}
                 >
-                  <td className="muted num">{new Date(e.created_at).toLocaleTimeString()}</td>
+                  <td className="muted num" title={fullTime(e.created_at)}>
+                    {timeAgo(e.created_at)}
+                  </td>
                   <td>{e.actor}</td>
                   <td>
                     <span className={`pill ${kindClass(e.kind)}`}>{e.kind}</span>
